@@ -96,11 +96,16 @@ def update_startup_button():
     else:
         startup_btn.config(text="⭕ 开机自启", bg='#95a5a6')
 
+def get_config_path():
+    """获取 config.bin 的绝对路径，保证自启动和直接运行都能找到配置文件"""
+    base_dir = os.path.dirname(os.path.abspath(__file__))
+    return os.path.join(base_dir, "config.bin")
+
 def load_info():
     global auto_flag
     auto_flag  = True
     try:
-        with open("config.bin", "rb") as f:
+        with open(get_config_path(), "rb") as f:
             config = ast.literal_eval(f.read().decode("utf-8"))
             entry_id.insert(0, config[0])
             if config[1] == None:
@@ -118,7 +123,7 @@ def load_info():
 
 def load_info_without_auto():
     try:
-        with open("config.bin", "rb") as f:
+        with open(get_config_path(), "rb") as f:
             config = ast.literal_eval(f.read().decode("utf-8"))
             entry_id.insert(0, config[0])
             if config[1] == None:
@@ -126,7 +131,7 @@ def load_info_without_auto():
             elif config[1] == "cmcc":
                 var_server.set("中国移动")
             elif config[1] == "njxy":
-                var_server.set("中���电信")
+                var_server.set("中国电信")
             entry_password.insert(0, config[2])
             auto_login.set(config[3])
     except FileNotFoundError:
@@ -146,7 +151,7 @@ def save_info():
         server = "njxy"
 
     config = [Bid, server, password, auto_login_status]
-    with open("config.bin", "wb") as f:
+    with open(get_config_path(), "wb") as f:
         f.write(str(config).encode("utf-8"))
     time.sleep(0.1)
 
