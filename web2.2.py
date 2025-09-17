@@ -97,15 +97,28 @@ def update_startup_button():
         startup_btn.config(text="⭕ 开机自启", bg='#95a5a6')
 
 def get_config_path():
-    """获取 config.bin 的绝对路径，保证自启动和直接运行都能找到配置文件"""
-    base_dir = os.path.dirname(os.path.abspath(__file__))
+    """获取 config.bin 的绝对路径（程序目录），兼容 exe 和脚本"""
+    if getattr(sys, 'frozen', False):
+        base_dir = os.path.dirname(sys.executable)
+    else:
+        base_dir = os.path.dirname(os.path.abspath(__file__))
     return os.path.join(base_dir, "config.bin")
+
+def ensure_config_exists():
+    """如 config.bin 不存在则自动生成一个默认配置文件"""
+    config_path = get_config_path()
+    if not os.path.exists(config_path):
+        default_config = ["", None, "", False]
+        with open(config_path, "wb") as f:
+            f.write(str(default_config).encode("utf-8"))
 
 def load_info():
     global auto_flag
     auto_flag  = True
+    config_path = get_config_path()
+    ensure_config_exists()
     try:
-        with open(get_config_path(), "rb") as f:
+        with open(config_path, "rb") as f:
             config = ast.literal_eval(f.read().decode("utf-8"))
             entry_id.insert(0, config[0])
             if config[1] == None:
@@ -122,8 +135,10 @@ def load_info():
         pass
 
 def load_info_without_auto():
+    config_path = get_config_path()
+    ensure_config_exists()
     try:
-        with open(get_config_path(), "rb") as f:
+        with open(config_path, "rb") as f:
             config = ast.literal_eval(f.read().decode("utf-8"))
             entry_id.insert(0, config[0])
             if config[1] == None:
@@ -151,11 +166,11 @@ def save_info():
         server = "njxy"
 
     config = [Bid, server, password, auto_login_status]
-    with open(get_config_path(), "wb") as f:
+    config_path = get_config_path()
+    with open(config_path, "wb") as f:
         f.write(str(config).encode("utf-8"))
     time.sleep(0.1)
 
-    # messagebox.showinfo("信息", "您的信息已保存！准备登录...")
     login(config)
 
 def login(config):
@@ -344,7 +359,7 @@ def create_title_bar(parent):
     controls_frame.pack(side='right', padx=5, pady=2)
 
     # 最小化按钮
-    min_btn = tk.Button(controls_frame, text="−", command=minimize_window,
+    min_btn = tk.Button(controls_frame, text="-", command=minimize_window,
                        bg='#34495e', fg='white', font=('Arial', 12, 'bold'),
                        relief='flat', bd=0, width=3, height=1)
     min_btn.pack(side='left', padx=1)
@@ -574,6 +589,8 @@ setup_styles()
 # 延迟执行强制任务栏图标显示
 root.after(100, force_taskbar_icon)
 
+# 在主程序入口处确保 config.bin 存在
+ensure_config_exists()
 show_login_interface()
 load_info()
 root.mainloop()
