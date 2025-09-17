@@ -6,4 +6,4 @@ NJUPT校园网登陆工具（PC）
 <img src="https://github.com/1EM0NS/NJUPT_NET/blob/main/img.png" width="500" height="500">
 
 ---
-打包命令：pyinstaller --name=NJUPT_Net --onefile -w  main.py -i t.ico --add-data t.png:./
+打包命令：pyinstaller --name=NJUPT_Net --onefile -w  main.py -i njupt.ico --add-data njupt.png:./
