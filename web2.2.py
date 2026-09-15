@@ -8,9 +8,174 @@ import time
 import ast
 import json
 import re
+import random
+import base64
+import ipaddress
+import html as html_module
+import urllib.parse
 import winreg
 from win32gui import *
 from win32con import *
+
+try:
+    import urllib3
+    urllib3.disable_warnings()
+except Exception:
+    pass
+
+# ===== 南邮校园网 2026 新认证协议（eportal 804 动态流程）=====
+PORTAL_URL = "https://p.njupt.edu.cn/"
+PORTAL_CONFIG_URL = "https://p.njupt.edu.cn:804/eportal/portal/page/loadConfig"
+PORTAL_LOGIN_URL = "https://p.njupt.edu.cn:804/eportal/portal/login"
+PORTAL_LOGOUT_URL = "https://p.njupt.edu.cn:804/eportal/portal/logout"
+USER_AGENT = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+              "(KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36")
+
+
+def _read_js_string(page, name, default=""):
+    match = re.search(r"\b{}\s*=\s*(['\"])(.*?)\1".format(re.escape(name)), page)
+    return match.group(2).strip() if match else default
+
+
+def _b64(value):
+    return base64.b64encode(value.encode("utf-8")).decode("ascii")
+
+
+def _xor_key(client_ip):
+    key = 0
+    for ch in client_ip:
+        key ^= ord(ch)
+    return key
+
+
+def _xor_hex(value, key):
+    if value is None or value == "":
+        return ""
+    return "".join("{:02x}".format(ord(ch) ^ key) for ch in str(value))
+
+
+def portal_login_flow(account, password):
+    """执行 2026 新版动态登录流程，返回 (result, msg)。
+    result=1 成功；'AC999' 表示已在线；其他为业务错误信息。"""
+    session = requests.Session()
+    session.verify = False
+    session.trust_env = False  # 忽略系统代理，直连认证网关
+    headers = {"User-Agent": USER_AGENT}
+
+    # 1. 访问门户首页，提取客户端 IP/MAC/VLAN 与 a41.js 地址
+    r = session.get(PORTAL_URL, headers=headers, timeout=10)
+    page = r.text
+    client_ip = _read_js_string(page, "ss5") or _read_js_string(page, "v46ip")
+    try:
+        if ipaddress.ip_address(client_ip).version != 4:
+            raise ValueError
+    except ValueError:
+        raise RuntimeError("门户页面未提供有效的客户端 IP（请先连接校园网）")
+    terminal = {
+        "ip": client_ip,
+        "ipv6": _read_js_string(page, "myv6ip"),
+        "mac": re.sub(r"[:-]", "", _read_js_string(page, "ss4", "000000000000")) or "000000000000",
+        "vlan": _read_js_string(page, "vlanid", "0") or "0",
+    }
+
+    # 2. 下载 a41.js，读取加密开关 page_data_encrypt
+    script_url = None
+    for m in re.finditer(r"<script\b[^>]*\bsrc\s*=\s*(['\"])(.*?)\1", page, re.IGNORECASE | re.DOTALL):
+        src = html_module.unescape(m.group(2).strip())
+        if re.search(r"(?:^|/)a41\.js(?:[?#]|$)", src, re.IGNORECASE):
+            script_url = urllib.parse.urljoin(PORTAL_URL, src)
+            break
+    page_data_encrypt = False
+    if script_url:
+        js = session.get(script_url, headers={"Referer": PORTAL_URL, "User-Agent": USER_AGENT},
+                         timeout=10).text
+        m = re.search(r"\bpage_data_encrypt\s*=\s*(['\"])([01])\1", js)
+        if m:
+            page_data_encrypt = m.group(2) == "1"
+
+    # 3. 调 loadConfig 获取动态登录配置
+    callback = "dr{}".format(time.time_ns() % 1000000000)
+    cfg_params = [
+        ("program_index", ""), ("wlan_vlan_id", terminal["vlan"]),
+        ("wlan_user_ip", _b64(terminal["ip"])), ("wlan_user_ipv6", _b64(terminal["ipv6"])),
+        ("wlan_user_ssid", ""), ("wlan_user_areaid", ""), ("wlan_ac_ip", _b64("")),
+        ("wlan_ap_mac", "000000000000"), ("gw_id", ""), ("page_index", ""),
+        ("callback", callback), ("jsVersion", "4.5"),
+        ("v", str(random.randrange(500, 10500))), ("lang", "zh"),
+    ]
+    r = session.get(PORTAL_CONFIG_URL, params=cfg_params,
+                    headers={"Referer": PORTAL_URL, "User-Agent": USER_AGENT}, timeout=10)
+    text = r.text.strip()
+    m = re.fullmatch(r"{}\((.*)\);?".format(re.escape(callback)), text, re.DOTALL)
+    try:
+        payload = json.loads(m.group(1) if m else text)
+    except json.JSONDecodeError:
+        raise RuntimeError("loadConfig 响应格式异常：{}".format(text[:200]))
+    if str(payload.get("code", "0")) == "0" or not isinstance(payload.get("data"), dict):
+        raise RuntimeError("loadConfig 被拒绝：{}".format(text[:200]))
+    config = payload["data"]
+
+    # 4. 按动态配置构造登录参数
+    account_prefix = ",0," if str(config.get("account_prefix", "0")) == "1" else ""
+    no_filter = str(config.get("no_filter_accandpwd", "0"))
+    portal_account = account_prefix + account
+    portal_password = password
+    if no_filter == "1":
+        portal_account = _b64(portal_account)
+        portal_password = _b64(portal_password)
+
+    data = [
+        ("login_method", str(config.get("login_method", ""))),
+        ("is_base64encode", no_filter),
+        ("user_account", portal_account),
+        ("user_password", portal_password),
+        ("wlan_user_ip", terminal["ip"]),
+        ("wlan_user_ipv6", terminal["ipv6"]),
+        ("wlan_user_mac", terminal["mac"]),
+        ("wlan_vlan_id", terminal["vlan"]),
+        ("wlan_ac_ip", ""), ("wlan_ac_name", ""),
+        ("authex_enable", ""), ("jsVersion", "4.5"),
+        ("terminal_type", "1"), ("lang", "zh-cn"),
+        ("user_agent", USER_AGENT),
+        ("enable_r3", str(config.get("enable_r3", "0"))),
+        ("mac_type", "0"),
+        ("rcn", str(config.get("rcn", ""))),
+        ("operate", "portal_login"), ("business_type", "1"),
+        ("program_index", str(config.get("program_index", ""))),
+        ("page_index", str(config.get("page_index", ""))),
+        ("callback", callback),
+    ]
+    if page_data_encrypt:
+        key = _xor_key(terminal["ip"])
+        params = [(name, _xor_hex(value, key)) for name, value in data]
+        params.append(("encrypt", "1"))
+    else:
+        params = list(data)
+    params.extend([("v", str(random.randrange(500, 10500))), ("lang", "zh")])
+
+    # 5. 提交登录
+    r = session.get(PORTAL_LOGIN_URL, params=params,
+                    headers={"Accept": "*/*", "Referer": PORTAL_URL, "User-Agent": USER_AGENT},
+                    timeout=15)
+    text = r.text.strip()
+    m = re.search(r"{}\((.*)\);?".format(re.escape(callback)), text, re.DOTALL)
+    try:
+        result = json.loads(m.group(1) if m else text)
+    except json.JSONDecodeError:
+        raise RuntimeError("登录响应格式异常：{}".format(text[:300]))
+    return result.get("result", 0), str(result.get("msg", "未知错误"))
+
+
+def portal_logout_flow():
+    """新版注销：直接请求 804 logout（带上从门户页拿到的参数即可）"""
+    session = requests.Session()
+    session.verify = False
+    session.trust_env = False
+    try:
+        session.get(PORTAL_LOGOUT_URL, timeout=8,
+                    headers={"User-Agent": USER_AGENT, "Referer": PORTAL_URL})
+    except requests.exceptions.RequestException:
+        pass
 
 auto_flag = False
 
@@ -121,12 +286,17 @@ def load_info():
         with open(config_path, "rb") as f:
             config = ast.literal_eval(f.read().decode("utf-8"))
             entry_id.insert(0, config[0])
+            # 兼容旧版后缀：dx 自动映射回 njxy（当前电信格式）
+            if config[1] == "dx":
+                config[1] = "njxy"
             if config[1] == None:
                 var_server.set("校园网")
             elif config[1] == "cmcc":
                 var_server.set("中国移动")
             elif config[1] == "njxy":
                 var_server.set("中国电信")
+            elif config[1] == "lt":
+                var_server.set("中国联通")
             entry_password.insert(0, config[2])
             auto_login.set(config[3])
             if config[3]:
@@ -141,12 +311,17 @@ def load_info_without_auto():
         with open(config_path, "rb") as f:
             config = ast.literal_eval(f.read().decode("utf-8"))
             entry_id.insert(0, config[0])
+            # 兼容旧版后缀：dx 自动映射回 njxy（当前电信格式）
+            if config[1] == "dx":
+                config[1] = "njxy"
             if config[1] == None:
                 var_server.set("校园网")
             elif config[1] == "cmcc":
                 var_server.set("中国移动")
             elif config[1] == "njxy":
                 var_server.set("中国电信")
+            elif config[1] == "lt":
+                var_server.set("中国联通")
             entry_password.insert(0, config[2])
             auto_login.set(config[3])
     except FileNotFoundError:
@@ -164,6 +339,8 @@ def save_info():
         server = "cmcc"
     elif server == "中国电信":
         server = "njxy"
+    elif server == "中国联通":
+        server = "lt"
 
     config = [Bid, server, password, auto_login_status]
     config_path = get_config_path()
@@ -174,79 +351,34 @@ def save_info():
     login(config)
 
 def login(config):
-    # 使用直连网关IP，绕过DNS
-    gateway_ip = "10.10.244.11"  # NJUPT校园网认证网关IP
-
-    if config[1] == None:
-        url = ("https://{}:802/eportal/portal/login?callback=dr1003&"
-               "login_method=1&"
-               "user_account=%2C0%2C{}&"
-               "user_password={}&".format(gateway_ip, config[0], config[2]))
+    """2026 新版动态登录流程"""
+    # 拼接运营商后缀（当前南邮格式：@cmcc 移动 / @njxy 电信）
+    if config[1] is None:
+        account = config[0]
     else:
-        url = ("https://{}:802/eportal/portal/login?callback=dr1003&"
-               "login_method=1&"
-               "user_account=%2C0%2C{}%40{}&"
-               "user_password={}&".format(gateway_ip, config[0], config[1], config[2]))
-
-    # 简化headers，只保留必要的
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-        "Host": "p.njupt.edu.cn:802",
-        "Referer": "https://p.njupt.edu.cn/"
-    }
-
-    while True:
-        try:
-            req = requests.get(url, headers=headers, timeout=10, verify=False)
-
-            # 提取JSON部分
-            json_match = re.search(r'dr1003\((.*)\);', req.text)
-            if json_match:
-                try:
-                    response_data = json.loads(json_match.group(1))
-                    result = response_data.get("result", 0)
-                    msg = response_data.get("msg", "未知错误")
-
-                    # 判断登录是否成功
-                    if result == 1:  # 登录成功
-                        messagebox.showinfo("登录成功", msg)
-                        show_logout_interface()
-                        break
-                    else:  # 登录失败
-                        # 检查是否已经登录(AC999)
-                        if "AC999" in msg:
-                            messagebox.showerror("登录失败", "您已经登录到校园网！")
-                            show_logout_interface()
-                            break
-                        else:
-                            messagebox.showerror("登录失败", msg)
-                            return
-                except json.JSONDecodeError:
-                    messagebox.showerror("登录失败", "响应格式错误！")
-                    return
-            else:
-                messagebox.showerror("登录失败", "未知错误！原始请求信息：\n" + req.text)
-                return
-        except requests.exceptions.RequestException as e:
-            messagebox.showerror("登录失败", f"网络请求失败：{str(e)}")
-            return
-
-def logout():
-    # 使用直连网关IP，简化登出请求
-    gateway_ip = "10.10.244.11"
-    url = f'https://{gateway_ip}:802/eportal/portal/logout?callback=dr1003&login_method=1&user_account=drcom&user_password=123&ac_logout=1'
-
-    # 简化headers
-    headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-        'Host': 'p.njupt.edu.cn:802',
-        'Referer': 'https://p.njupt.edu.cn/'
-    }
+        account = "{}@{}".format(config[0], config[1])
 
     try:
-        requests.get(url, headers=headers, timeout=5, verify=False)
-    except:
-        pass  # 忽略登出时的网络错误
+        result, msg = portal_login_flow(account, config[2])
+    except RuntimeError as e:
+        messagebox.showerror("登录失败", str(e))
+        return
+    except requests.exceptions.RequestException as e:
+        messagebox.showerror("登录失败", "网络请求失败：{}".format(e))
+        return
+
+    if result == 1:
+        messagebox.showinfo("登录成功", msg)
+        show_logout_interface()
+    elif "AC999" in msg:
+        messagebox.showinfo("提示", "您已经登录到校园网！")
+        show_logout_interface()
+    else:
+        messagebox.showerror("登录失败", msg)
+
+def logout():
+    """新版注销流程"""
+    portal_logout_flow()
     show_login_interface()
 
 def center_window(root, width=400, height=350):
@@ -435,7 +567,7 @@ def show_login_interface():
     global var_server
     var_server = tk.StringVar()
     server_combo = ttk.Combobox(inner_frame, textvariable=var_server,
-                               values=["校园网", "中国移动", "中国电信"],
+                               values=["校园网", "中国移动", "中国电信", "中国联通"],
                                style='Custom.TCombobox', width=17, state='readonly')
     server_combo.grid(row=2, column=1, padx=(0, 10), pady=15, sticky='w')
 
