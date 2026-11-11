@@ -1,7 +1,19 @@
-# 🌐 NJUPT 校园网助手
+# 🌐 NJUPT 校园网助手 v2.3
 
 > 一个基于 Python + Tkinter 编写的南京邮电大学校园网登录小工具，解决校园网登录繁琐的问题。  
 > 打包为 `exe` 文件后，双击即可使用，无需每次打开浏览器手动输入账号密码。
+
+---
+
+## 🆕 v2.3 更新
+
+- 修复认证接口端口变更导致的登录失败：`p.njupt.edu.cn` 的认证接口已由 **804** 改为 **802**（801 为同服务的 HTTP 端口），程序会自动探测可用端口。
+- 界面重做：渐变标题栏、卡片式表单、运营商分段选择、密码显示/隐藏、开关式自动登录。
+- 单页状态驱动：启动即检测网络状态，同一页面显示“已连接 / 未连接”，主按钮随之在“立即登录 / 退出登录”之间切换。
+- 全流程不再弹窗，错误与结果都在状态区就地提示。
+- 修复注销失败：注销请求现在会带上本机 IP / MAC / VLAN，否则网关返回“注销操作非本机终端”。
+- 开启高 DPI 感知并按系统缩放布局，125% / 150% 缩放下文字不再发虚。
+- 圆角、圆形控件改用 4 倍超采样贴图绘制，边缘不再有锯齿。
 
 ---
 
@@ -17,6 +29,12 @@
 ---
 
 ## 📸 软件截图
+
+### v2.3 单页界面
+
+<img src="preview_online.png" width="330">
+&nbsp;&nbsp;
+<img src="preview_offline.png" width="330">
 
 ### 登录界面
 
@@ -45,7 +63,8 @@
 ## ⚙️ 技术细节
 
 - 界面使用 **Tkinter** 自定义标题栏 & 样式
-- 网络请求使用 `requests`，直连校园网认证网关 IP `10.10.244.11`
+- 网络请求使用 `requests`，直连校园网认证网关（`p.njupt.edu.cn` → `10.10.244.11`）
+- 认证接口：`https://p.njupt.edu.cn:802/eportal/portal/{loadConfig,login,logout}`
 - 用户配置信息保存于本地 `config.bin` 文件
 - 使用 `winreg` 操作注册表实现开机自启
 - 支持打包为单个 `exe` 文件（推荐使用 [PyInstaller](https://pyinstaller.org/)）
@@ -57,7 +76,7 @@
 ```bash
 NJUPT_NET/
 ├─ njupt.png        # 程序图标
-├─ web2.2.py          # 主程序源码
+├─ web2.3.py         # 主程序源码（当前版本）
 ├─ config.bin       # 本地保存的用户配置（运行后生成）
 └─ njupt.ico.exe   #程序图标
 ```
@@ -70,20 +89,21 @@ NJUPT_NET/
 
 ### 安装依赖
 ```bash
-pip install pyinstaller
+pip install pyinstaller requests pillow pywin32
 ```
 
 ### 打包命令
 在项目根目录下执行：
 ```bash
-pyinstaller --name=NJUPT_Net --onefile -w main.py -i njupt.ico --add-data njupt.png:./
+pyinstaller --name=NJUPT_Net --onefile -w web2.3.py -i njupt.ico --add-data "njupt.png;."
 ```
 
 参数说明：
 - `-F` → 打包为单文件
 - `-w` → 去掉命令行窗口（GUI 程序推荐加）
 - `-i njupt.png` → 指定程序图标（可选）
-- `main.py` → 主程序入口
+- `web2.3.py` → 主程序入口
+- `pillow` 用于绘制抗锯齿的圆角控件；缺少时自动回退为纯 Canvas 绘制（边缘会有锯齿）
 
 打包完成后，生成的 `exe` 文件会在 `dist/` 目录下。
 
