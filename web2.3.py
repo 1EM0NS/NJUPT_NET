@@ -220,7 +220,17 @@ def close_window():
     root.quit()
 
 def minimize_window():
-    root.iconify()
+    """无边框窗口不能用 Tk 的 iconify，直接走 Win32 最小化。"""
+    try:
+        import ctypes
+        hwnd = root.winfo_id()
+        hwnd = ctypes.windll.user32.GetParent(hwnd) or hwnd
+        ctypes.windll.user32.ShowWindow(hwnd, 6)  # SW_MINIMIZE
+    except Exception:
+        try:
+            root.iconify()
+        except tk.TclError:
+            pass
 
 def open_url(event):
     webbrowser.open_new("https://github.com/1EM0NS/NJUPT_NET/")
@@ -973,28 +983,32 @@ def _logout_worker(account):
 
 
 def _after_logout(ok, msg):
-    STATE["busy"] = False
-    if ok:
-        _set_status("offline", "已退出登录", msg)
-        STATE["online"] = False
-        _render_button()
-        threading.Thread(target=_confirm_logout, daemon=True).start()
-    else:
-        _set_status("error", "退出失败", msg)
-        _render_button()
+    """网关的返回不可靠，最终以“探测是否还能上网”为准。"""
+    STATE["busy"] = True
+    STATE["busy_text"] = "正在确认退出结果…"
+    _set_status("checking", "正在确认退出结果…", "")
+    _render_button()
+    threading.Thread(target=_confirm_logout, args=(ok, msg), daemon=True).start()
 
 
-def _confirm_logout():
+def _confirm_logout(ok, msg):
     online = check_online()
-    _post(_finish_logout_check, online)
+    if not online:
+        time.sleep(0.7)
+        online = check_online()
+    _post(_finish_logout_check, online, ok, msg)
 
 
-def _finish_logout_check(online):
-    if online:
-        _apply_status(True)
-        _set_status("error", "仍处于在线状态", "退出请求未被网关接受，可稍后重试")
+def _finish_logout_check(online, ok, msg):
+    STATE["busy"] = False
+    STATE["online"] = bool(online)
+    if not online:
+        sub = "网络已断开，可随时重新登录" if ok else "网关未返回成功标识，但已确认离线"
+        _set_status("offline", "已退出登录", sub)
     else:
-        _apply_status(False)
+        _set_status("error", "退出失败",
+                    msg if not ok else "网关返回成功，但探测仍显示在线，请稍后重试")
+    _render_button()
 
 
 def _start_busy(text):
@@ -1023,8 +1037,7 @@ def do_login():
         _set_status("error", "请填写密码", "密码不能为空")
         entry_password.focus_set()
         return
-    suffix = {"校园网": None, "中国移动": "cmcc",
-              "中国电信": "njxy", "中国联通": "lt"}.get(var_server.get())
+    suffix = SERVER_SUFFIX.get(var_server.get())
     save_config(account, suffix, password, auto_login.get())
     full = account if suffix is None else "{}@{}".format(account, suffix)
     _start_busy("正在登录…")
@@ -1048,6 +1061,25 @@ def save_config(account, suffix, password, auto):
         with open(get_config_path(), "wb") as f:
             f.write(str(config).encode("utf-8"))
     except OSError:
+        pass
+
+
+SERVER_SUFFIX = {"校园网": None, "中国移动": "cmcc",
+                 "中国电信": "njxy", "中国联通": "lt"}
+
+
+def _persist_toggle():
+    """开关一变动就写盘，不必等到点登录。"""
+    try:
+        if entry_id is None or entry_password is None or var_server is None:
+            return
+        account = entry_id.get().strip()
+        password = entry_password.get()
+        if not account or not password:
+            return
+        save_config(account, SERVER_SUFFIX.get(var_server.get()), password,
+                    bool(auto_login.get()))
+    except Exception:
         pass
 
 
@@ -1205,7 +1237,7 @@ def show_main_interface():
 
     auto_login = tk.BooleanVar(value=False)
     Switch(options_frame, auto_login).pack(side="left")
-    tk.Label(options_frame, text="自动登录", bg=CARD, fg=TEXT,
+    tk.Label(options_frame, text="启动时自动登录", bg=CARD, fg=TEXT,
              font=(FONT, 10)).pack(side="left", padx=(S(10), 0))
 
     startup_btn = RoundButton(options_frame, text="开机自启：关", command=toggle_startup,
@@ -1223,6 +1255,7 @@ def show_main_interface():
     _link_row(body).pack(side="bottom", fill="x", padx=S(26), pady=S(14))
 
     load_config_into_ui()
+    auto_login.trace_add("write", lambda *a: _persist_toggle())
     _render_button()
     refresh_status()
 
