@@ -36,13 +36,6 @@
 &nbsp;&nbsp;
 <img src="preview_offline.png" width="330">
 
-### 登录界面
-
-<img src="https://github.com/1EM0NS/NJUPT_NET/blob/main/login.png" width="250" height="500">
-
-### 登陆成功界面
-
-<img src="https://github.com/1EM0NS/NJUPT_NET/blob/main/success.png" width="250" height="500">
 
 
 
