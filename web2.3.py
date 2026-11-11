@@ -14,6 +14,8 @@ import base64
 import ipaddress
 import html as html_module
 import urllib.parse
+import ctypes
+from ctypes import wintypes
 import winreg
 from win32gui import *
 from win32con import *
@@ -982,20 +984,36 @@ def _logout_worker(account):
         _post(_after_logout, False, msg)
 
 
+def _wait_until_offline(seconds):
+    """在限定时间内轮询；一旦确认离线就返回 False，超时仍在线返回 True。"""
+    deadline = time.time() + seconds
+    while True:
+        if not check_online():
+            return False
+        if time.time() >= deadline:
+            return True
+        time.sleep(1.0)
+
+
 def _after_logout(ok, msg):
     """网关的返回不可靠，最终以“探测是否还能上网”为准。"""
     STATE["busy"] = True
     STATE["busy_text"] = "正在确认退出结果…"
     _set_status("checking", "正在确认退出结果…", "")
     _render_button()
-    threading.Thread(target=_confirm_logout, args=(ok, msg), daemon=True).start()
+    threading.Thread(target=_confirm_logout,
+                     args=(ok, msg, STATE.get("account", "")), daemon=True).start()
 
 
-def _confirm_logout(ok, msg):
-    online = check_online()
-    if not online:
-        time.sleep(0.7)
-        online = check_online()
+def _confirm_logout(ok, msg, account):
+    """注销生效有延迟，先等几秒；仍在线就再发一次注销请求。"""
+    online = _wait_until_offline(5)
+    if online and ok:
+        try:
+            portal_logout_flow(account)
+        except Exception:
+            pass
+        online = _wait_until_offline(5)
     _post(_finish_logout_check, online, ok, msg)
 
 
@@ -1007,7 +1025,7 @@ def _finish_logout_check(online, ok, msg):
         _set_status("offline", "已退出登录", sub)
     else:
         _set_status("error", "退出失败",
-                    msg if not ok else "网关返回成功，但探测仍显示在线，请稍后重试")
+                    msg if not ok else "网关返回成功但仍能上网，注销可能未生效，请稍后重试")
     _render_button()
 
 
@@ -1050,6 +1068,7 @@ def do_logout():
     if not account:
         load_config_into_ui()
         account = entry_id.get().strip()
+    STATE["account"] = account
     _start_busy("正在退出…")
     _set_status("checking", "正在退出登录…", "")
     threading.Thread(target=_logout_worker, args=(account,), daemon=True).start()
@@ -1304,10 +1323,98 @@ def _taskbar_add_tab(hwnd):
         return False
 
 
+_nc_proc_ref = None
+_nc_orig_proc = None
+_fixed_win_size = (0, 0)
+
+
+class _POINT(ctypes.Structure):
+    _fields_ = [("x", ctypes.c_long), ("y", ctypes.c_long)]
+
+
+class _MINMAXINFO(ctypes.Structure):
+    _fields_ = [("ptReserved", _POINT), ("ptMaxSize", _POINT),
+                ("ptMaxPosition", _POINT), ("ptMinTrackSize", _POINT),
+                ("ptMaxTrackSize", _POINT)]
+
+
+def _install_borderless_nc_handler(hwnd):
+    """让客户区铺满整个窗口：DWM 的关键帧动画要求窗口有 caption 位。"""
+    global _nc_proc_ref, _nc_orig_proc
+    if _nc_proc_ref is not None:
+        return
+    try:
+        import ctypes
+        user32 = ctypes.windll.user32
+        result_t = ctypes.c_ssize_t
+        wndproc_t = ctypes.WINFUNCTYPE(result_t, ctypes.c_void_p, ctypes.c_uint,
+                                       ctypes.c_size_t, ctypes.c_ssize_t)
+
+        def _proc(h, msg, wparam, lparam):
+            try:
+                if msg == 0x0083 and wparam:      # WM_NCCALCSIZE：客户区 = 整窗
+                    return 0
+                if msg == 0x0084:                 # WM_NCHITTEST：一律算客户区
+                    return 1                      # HTCLIENT
+                if msg == 0x0024 and _fixed_win_size[0]:   # WM_GETMINMAXINFO
+                    mmi = ctypes.cast(lparam, ctypes.POINTER(_MINMAXINFO)).contents
+                    w, hh = _fixed_win_size
+                    mmi.ptMinTrackSize.x = w
+                    mmi.ptMinTrackSize.y = hh
+                    mmi.ptMaxTrackSize.x = w
+                    mmi.ptMaxTrackSize.y = hh
+                    return 0
+            except Exception:
+                pass
+            try:
+                return user32.CallWindowProcW(_nc_orig_proc, h, msg, wparam, lparam)
+            except Exception:
+                return 0
+
+        _nc_proc_ref = wndproc_t(_proc)
+        setter = getattr(user32, "SetWindowLongPtrW", user32.SetWindowLongW)
+        setter.restype = ctypes.c_void_p
+        setter.argtypes = [ctypes.c_void_p, ctypes.c_int, ctypes.c_void_p]
+        user32.CallWindowProcW.restype = result_t
+        user32.CallWindowProcW.argtypes = [ctypes.c_void_p, ctypes.c_void_p,
+                                           ctypes.c_uint, ctypes.c_size_t,
+                                           ctypes.c_ssize_t]
+        old = setter(ctypes.c_void_p(hwnd), -4, ctypes.cast(_nc_proc_ref, ctypes.c_void_p))
+        _nc_orig_proc = old
+        if not old:
+            _nc_proc_ref = None
+    except Exception:
+        _nc_proc_ref = None
+
+
+def apply_aero_borderless(width=None, height=None):
+    """补回 caption/thickframe 样式以获得 DWM 最小化动画，边框由 NC 处理抹掉。"""
+    global _fixed_win_size
+    try:
+        hwnd = _taskbar_toplevel()
+        _install_borderless_nc_handler(hwnd)
+        if width and height:
+            _fixed_win_size = (int(width), int(height))
+        elif not _fixed_win_size[0]:
+            rect = wintypes.RECT()
+            ctypes.windll.user32.GetWindowRect(ctypes.c_void_p(hwnd), ctypes.byref(rect))
+            if rect.right > rect.left and rect.bottom > rect.top:
+                _fixed_win_size = (rect.right - rect.left, rect.bottom - rect.top)
+        style = GetWindowLong(hwnd, GWL_STYLE)
+        wanted = style | WS_CAPTION | WS_THICKFRAME | WS_SYSMENU | WS_MINIMIZEBOX
+        if wanted != style:
+            SetWindowLong(hwnd, GWL_STYLE, wanted)
+            SetWindowPos(hwnd, 0, 0, 0, 0, 0,
+                         SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_FRAMECHANGED)
+    except Exception:
+        pass
+
+
 def force_taskbar_icon():
     """无边框窗口要显式挂到任务栏：样式改在顶层，并让外壳立刻登记按钮。"""
     try:
         root.update()
+        apply_aero_borderless()
         hwnd = _taskbar_toplevel()
         ex = GetWindowLong(hwnd, GWL_EXSTYLE)
         wanted = (ex | WS_EX_APPWINDOW) & ~WS_EX_TOOLWINDOW
@@ -1385,6 +1492,7 @@ except Exception:
     pass
 
 center_window(root, S(WIN_W), S(WIN_H))
+apply_aero_borderless(S(WIN_W), S(WIN_H))
 root.after(120, force_taskbar_icon)
 root.after(300, _round_window_corners)
 
