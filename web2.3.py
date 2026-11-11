@@ -1266,17 +1266,58 @@ def get_resource_path(relative_path):
     return os.path.join(os.path.dirname(os.path.abspath(__file__)), relative_path)
 
 
+def _taskbar_toplevel():
+    """返回真正被外壳认作顶层的窗口（Tk 的根窗口外面还套了一层）。"""
+    from ctypes import windll
+    return windll.user32.GetParent(root.winfo_id()) or root.winfo_id()
+
+
+def _taskbar_add_tab(hwnd):
+    """用 ITaskbarList.AddTab 让外壳立刻建出任务栏按钮。"""
+    try:
+        import ctypes
+
+        class GUID(ctypes.Structure):
+            _fields_ = [("Data1", ctypes.c_uint32), ("Data2", ctypes.c_uint16),
+                        ("Data3", ctypes.c_uint16), ("Data4", ctypes.c_ubyte * 8)]
+
+        ole32 = ctypes.windll.ole32
+        ole32.CoInitialize(None)
+        clsid = GUID(0x56FDF344, 0xFD6D, 0x11D0,
+                     (ctypes.c_ubyte * 8)(0x95, 0x8A, 0x00, 0x60, 0x97, 0xC9, 0xA0, 0x90))
+        iid = GUID(0x56FDF342, 0xFD6D, 0x11D0,
+                   (ctypes.c_ubyte * 8)(0x95, 0x8A, 0x00, 0x60, 0x97, 0xC9, 0xA0, 0x90))
+        ptr = ctypes.c_void_p()
+        hr = ole32.CoCreateInstance(ctypes.byref(clsid), None, 1,
+                                    ctypes.byref(iid), ctypes.byref(ptr))
+        if hr != 0 or not ptr.value:
+            return False
+        vtable = ctypes.cast(ptr, ctypes.POINTER(ctypes.POINTER(ctypes.c_void_p))).contents
+        hr_init = ctypes.WINFUNCTYPE(ctypes.c_long, ctypes.c_void_p)(vtable[3])
+        hr_init(ptr)
+        add_tab = ctypes.WINFUNCTYPE(ctypes.c_long, ctypes.c_void_p, ctypes.c_void_p)(vtable[4])
+        ok = add_tab(ptr, ctypes.c_void_p(hwnd)) == 0
+        release = ctypes.WINFUNCTYPE(ctypes.c_ulong, ctypes.c_void_p)(vtable[2])
+        release(ptr)
+        return ok
+    except Exception:
+        return False
+
+
 def force_taskbar_icon():
-    """无边框窗口要显式挂到任务栏：样式必须改在真正的顶层 TkTopLevel 上。"""
+    """无边框窗口要显式挂到任务栏：样式改在顶层，并让外壳立刻登记按钮。"""
     try:
         root.update()
-        from ctypes import windll
-        hwnd = windll.user32.GetParent(root.winfo_id()) or root.winfo_id()
+        hwnd = _taskbar_toplevel()
         ex = GetWindowLong(hwnd, GWL_EXSTYLE)
-        ex = (ex | WS_EX_APPWINDOW) & ~WS_EX_TOOLWINDOW
-        SetWindowLong(hwnd, GWL_EXSTYLE, ex)
-        SetWindowPos(hwnd, 0, 0, 0, 0, 0,
-                     SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_FRAMECHANGED)
+        wanted = (ex | WS_EX_APPWINDOW) & ~WS_EX_TOOLWINDOW
+        if wanted != ex:
+            SetWindowLong(hwnd, GWL_EXSTYLE, wanted)
+            SetWindowPos(hwnd, 0, 0, 0, 0, 0,
+                         SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_FRAMECHANGED)
+        if not _taskbar_add_tab(hwnd):
+            ShowWindow(hwnd, 0)   # 兜底：隐藏再显示一次，迫使外壳重新登记按钮
+            ShowWindow(hwnd, 5)
     except Exception:
         pass
 
