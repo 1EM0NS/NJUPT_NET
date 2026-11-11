@@ -110,11 +110,6 @@ pyinstaller --name=NJUPT_Net --onefile -w web2.3.py -i njupt.ico --add-data "nju
 - 登录接口依赖校园网认证网关，若校方更新认证系统，可能需要更新程序  
 
 ---
-
-## 📚 项目地址
-
-GitHub: [NJUPT_NET](https://github.com/1EM0NS/NJUPT_NET)
-
 ---
 
 
