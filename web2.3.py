@@ -928,10 +928,10 @@ def _login_worker(account, password):
         _post(_after_login, False, str(e))
         return
     except requests.exceptions.RequestException as e:
-        _post(_after_login, False, "网络请求失败：{}".format(e))
+        _post(_after_login, False, "网络请求失败：{}: {}".format(type(e).__name__, e))
         return
     except Exception as e:
-        _post(_after_login, False, "登录异常：{}".format(e))
+        _post(_after_login, False, "程序异常：{}: {}".format(type(e).__name__, e))
         return
     if result == 1:
         _post(_after_login, True, msg)
@@ -960,8 +960,11 @@ def _verify_after_login():
 def _logout_worker(account):
     try:
         result, msg = portal_logout_flow(account)
+    except requests.exceptions.RequestException as e:
+        _post(_after_logout, False, "网络请求失败：{}: {}".format(type(e).__name__, e))
+        return
     except Exception as e:
-        _post(_after_logout, False, "网络请求失败：{}".format(e))
+        _post(_after_logout, False, "程序异常：{}: {}".format(type(e).__name__, e))
         return
     if result == 1:
         _post(_after_logout, True, msg)
