@@ -1267,10 +1267,16 @@ def get_resource_path(relative_path):
 
 
 def force_taskbar_icon():
+    """无边框窗口要显式挂到任务栏：样式必须改在真正的顶层 TkTopLevel 上。"""
     try:
         root.update()
-        hwnd = root.winfo_id()
-        SetWindowLong(hwnd, GWL_EXSTYLE, GetWindowLong(hwnd, GWL_EXSTYLE) | WS_EX_APPWINDOW)
+        from ctypes import windll
+        hwnd = windll.user32.GetParent(root.winfo_id()) or root.winfo_id()
+        ex = GetWindowLong(hwnd, GWL_EXSTYLE)
+        ex = (ex | WS_EX_APPWINDOW) & ~WS_EX_TOOLWINDOW
+        SetWindowLong(hwnd, GWL_EXSTYLE, ex)
+        SetWindowPos(hwnd, 0, 0, 0, 0, 0,
+                     SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_FRAMECHANGED)
     except Exception:
         pass
 
