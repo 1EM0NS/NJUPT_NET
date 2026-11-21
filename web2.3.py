@@ -28,17 +28,21 @@ except Exception:
 
 # ===== 南邮校园网 2026 新认证协议（eportal 802 动态流程）=====
 PORTAL_URL = "https://p.njupt.edu.cn/"
-# 2026-11 起认证接口端口由 804 改为 802（801 为同服务的 HTTP 端口）
-PORTAL_API_PORT = 802
+# 门户当前 a41.js: epHTTPPort=803, enHTTPSPort=804
+PORTAL_API_PORT = 804
 PORTAL_CONFIG_URL = "https://p.njupt.edu.cn:{}/eportal/portal/page/loadConfig".format(PORTAL_API_PORT)
 PORTAL_LOGIN_URL = "https://p.njupt.edu.cn:{}/eportal/portal/login".format(PORTAL_API_PORT)
 PORTAL_LOGOUT_URL = "https://p.njupt.edu.cn:{}/eportal/portal/logout".format(PORTAL_API_PORT)
-CANDIDATE_API_PORTS = (802, 804)
+PORTAL_ONLINE_URL = "https://p.njupt.edu.cn:{}/eportal/portal/online_list".format(PORTAL_API_PORT)
+CANDIDATE_API_PORTS = (804, 802)
+JS_VERSION = "4.5.1"
+UPDATE_API_URL = "https://api.github.com/repos/1EM0NS/NJUPT_NET/releases/latest"
+RELEASES_URL = "https://github.com/1EM0NS/NJUPT_NET/releases/latest"
 
 
 def _ensure_api_port():
     """探测认证接口可用端口，兼容校方后续调整端口。"""
-    global PORTAL_API_PORT, PORTAL_CONFIG_URL, PORTAL_LOGIN_URL, PORTAL_LOGOUT_URL
+    global PORTAL_API_PORT, PORTAL_CONFIG_URL, PORTAL_LOGIN_URL, PORTAL_LOGOUT_URL, PORTAL_ONLINE_URL
     for port in CANDIDATE_API_PORTS:
         try:
             with socket.create_connection(("p.njupt.edu.cn", port), timeout=2):
@@ -49,6 +53,7 @@ def _ensure_api_port():
         PORTAL_CONFIG_URL = "https://p.njupt.edu.cn:{}/eportal/portal/page/loadConfig".format(port)
         PORTAL_LOGIN_URL = "https://p.njupt.edu.cn:{}/eportal/portal/login".format(port)
         PORTAL_LOGOUT_URL = "https://p.njupt.edu.cn:{}/eportal/portal/logout".format(port)
+        PORTAL_ONLINE_URL = "https://p.njupt.edu.cn:{}/eportal/portal/online_list".format(port)
         return port
     return PORTAL_API_PORT
 USER_AGENT = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
@@ -62,6 +67,194 @@ def _read_js_string(page, name, default=""):
 
 def _b64(value):
     return base64.b64encode(value.encode("utf-8")).decode("ascii")
+
+
+def _log(message):
+    try:
+        path = os.path.join(os.path.dirname(get_config_path()), "njupt_net.log")
+        line = "{} {}\n".format(time.strftime("%Y-%m-%d %H:%M:%S"), message)
+        with open(path, "a", encoding="utf-8") as f:
+            f.write(line)
+    except Exception:
+        pass
+
+
+def _parse_jsonp(text):
+    """解析 Dr.COM 响应；JSONP 回调名以服务器实际返回的为准。"""
+    body = text.strip()
+    if body.startswith("{"):
+        return json.loads(body)
+    m = re.fullmatch(r"(?:/\*\*/\s*)?[A-Za-z_$][\w$.]*\s*\((.*)\)\s*;?", body, re.DOTALL)
+    if not m:
+        raise ValueError("响应不是 JSON 或 JSONP")
+    return json.loads(m.group(1))
+
+
+def _version_key(value):
+    match = re.search(r"\d+(?:\.\d+)*", str(value or ""))
+    if not match:
+        return ()
+    return tuple(int(part) for part in match.group(0).split("."))
+
+
+def _is_newer_version(remote, local):
+    remote_key = _version_key(remote)
+    local_key = _version_key(local)
+    if not remote_key:
+        return False
+    size = max(len(remote_key), len(local_key))
+    remote_key += (0,) * (size - len(remote_key))
+    local_key += (0,) * (size - len(local_key))
+    return remote_key > local_key
+
+
+def _latest_release():
+    """读取 GitHub 最新正式 Release；API 限流时退回 releases/latest 跳转。"""
+    session = requests.Session()
+    session.headers.update({
+        "User-Agent": "NJUPT_Net-update-check",
+        "Accept": "application/vnd.github+json",
+    })
+    try:
+        r = session.get(UPDATE_API_URL, timeout=(3.05, 6))
+        if r.status_code == 200:
+            data = r.json()
+            if isinstance(data, dict):
+                tag = str(data.get("tag_name") or "").strip()
+                if tag:
+                    return {
+                        "tag": tag,
+                        "url": data.get("html_url") or RELEASES_URL,
+                        "name": data.get("name") or tag,
+                    }
+        _log("update api status={} body={}".format(r.status_code, r.text[:200]))
+    except (requests.exceptions.RequestException, ValueError) as exc:
+        _log("update api failed: {!r}".format(exc))
+
+    try:
+        r = session.get(RELEASES_URL, allow_redirects=False, timeout=(3.05, 6))
+        location = r.headers.get("Location", "")
+        if location:
+            url = urllib.parse.urljoin(RELEASES_URL, location)
+            tag = urllib.parse.unquote(url.rstrip("/").rsplit("/", 1)[-1])
+            if tag:
+                return {"tag": tag, "url": url, "name": tag}
+        _log("update redirect status={} location={}".format(r.status_code, location))
+    except requests.exceptions.RequestException as exc:
+        _log("update redirect failed: {!r}".format(exc))
+    raise RuntimeError("无法获取最新版本信息")
+
+
+def _portal_online_session(session):
+    """查询本机当前在线会话；离线或查询失败返回 None。"""
+    headers = {"User-Agent": USER_AGENT, "Referer": PORTAL_URL}
+    try:
+        page = session.get(PORTAL_URL, headers=headers, timeout=8).text
+        ip = _read_js_string(page, "ss5") or _read_js_string(page, "v46ip")
+        ipaddress.IPv4Address(ip)
+    except (requests.exceptions.RequestException, ValueError) as exc:
+        _log("online session: portal page failed: {!r}".format(exc))
+        return None
+    params = [
+        ("callback", "dr1002"), ("user_account", ""), ("user_password", ""),
+        ("wlan_user_mac", "000000000000"),
+        ("wlan_user_ip", str(int(ipaddress.IPv4Address(ip)))),
+        ("curr_user_ip", ""), ("jsVersion", JS_VERSION),
+        ("v", "10081"), ("lang", "zh"),
+    ]
+    try:
+        r = session.get(PORTAL_ONLINE_URL, params=params, headers=headers, timeout=8)
+        payload = _parse_jsonp(r.text)
+    except (requests.exceptions.RequestException, ValueError) as exc:
+        _log("online_list failed: {!r}".format(exc))
+        return None
+    _log("online_list port={} ip={} result={} msg={}".format(
+        PORTAL_API_PORT, ip, payload.get("result"), payload.get("msg")))
+    if str(payload.get("result")) != "1":
+        return None
+    items = payload.get("list") or []
+    if not items:
+        return None
+    first = items[0]
+    return {
+        "ip": first.get("online_ip") or ip,
+        "account": str(first.get("user_account", "")),
+        "mac": str(first.get("online_mac", "")) or "000000000000",
+        "vlan": _read_js_string(page, "vlanid", "0") or "0",
+        "session": str(first.get("online_session", "")),
+    }
+
+
+def _self_service_offline(session, account, info):
+    """通过 Dr.COM 自服务踢掉本机当前会话，绕开失效的 AC 注销接口。"""
+    headers = {"User-Agent": USER_AGENT, "Referer": PORTAL_URL}
+    try:
+        ip = str(info.get("ip") or "")
+        ip_int = str(int(ipaddress.IPv4Address(ip)))
+    except (TypeError, ValueError):
+        return False, "无法识别本机 IP"
+    mac = (info.get("mac") or "000000000000").upper()
+    params = {
+        "callback": "dr{}".format(time.time_ns() % 1000000000),
+        "self_type": "1",
+        "user_account": account or info.get("account", ""),
+        "user_password": "",
+        "wlan_user_mac": mac,
+        "wlan_user_ip": ip_int,
+        "jsVersion": JS_VERSION,
+        "v": str(random.randrange(500, 10500)),
+        "lang": "zh",
+    }
+    submitted = False
+    try:
+        self_url = "https://p.njupt.edu.cn:{}/eportal/portal/self".format(PORTAL_API_PORT)
+        r = session.get(self_url, params=params, headers=headers, timeout=10)
+        payload = _parse_jsonp(r.text)
+        auth_url = payload.get("self_auth_url") or ""
+        if str(payload.get("result")) != "1" or not auth_url:
+            return False, str(payload.get("msg", "自服务入口获取失败"))
+
+        # 打开门户签发的免密链接，建立自服务登录态。
+        r = session.get(auth_url, headers=headers, timeout=12)
+        parts = urllib.parse.urlsplit(r.url)
+        base = "{}://{}".format(parts.scheme, parts.netloc)
+        self_headers = {
+            "User-Agent": USER_AGENT,
+            "Referer": "{}/Self/dashboard".format(base),
+            "X-Requested-With": "XMLHttpRequest",
+        }
+        r = session.get(base + "/Self/dashboard/getOnlineList",
+                        params={"order": "asc", "_": str(int(time.time() * 1000))},
+                        headers=self_headers, timeout=10)
+        items = r.json()
+        if isinstance(items, dict):
+            items = items.get("rows") or items.get("data") or []
+        target = None
+        for item in items or []:
+            if str(item.get("ip", "")) == ip:
+                target = item
+                break
+        if target is None:
+            return True, "本机会话已不在线"
+        session_id = target.get("sessionId")
+        if session_id in (None, ""):
+            return False, "自服务未返回会话编号"
+
+        submitted = True
+        r = session.get(base + "/Self/dashboard/tooffline",
+                        params={"sessionid": str(session_id)},
+                        headers=self_headers, timeout=10)
+        payload = r.json()
+        if payload.get("success"):
+            _log("self-service offline ok ip={} sid={}".format(ip, session_id))
+            return True, "已通过自服务注销"
+        return False, "自服务注销失败"
+    except (requests.exceptions.RequestException, ValueError) as exc:
+        if submitted:
+            _log("self-service offline submitted, response lost: {!r}".format(exc))
+            return True, "已提交注销，网络已断开"
+        _log("self-service offline failed: {!r}".format(exc))
+        return False, "自服务注销失败：{}".format(exc)
 
 
 def _xor_key(client_ip):
@@ -124,16 +317,16 @@ def portal_login_flow(account, password):
         ("wlan_user_ip", _b64(terminal["ip"])), ("wlan_user_ipv6", _b64(terminal["ipv6"])),
         ("wlan_user_ssid", ""), ("wlan_user_areaid", ""), ("wlan_ac_ip", _b64("")),
         ("wlan_ap_mac", "000000000000"), ("gw_id", ""), ("page_index", ""),
-        ("callback", callback), ("jsVersion", "4.5"),
+        ("callback", callback), ("jsVersion", JS_VERSION),
         ("v", str(random.randrange(500, 10500))), ("lang", "zh"),
     ]
     r = session.get(PORTAL_CONFIG_URL, params=cfg_params,
                     headers={"Referer": PORTAL_URL, "User-Agent": USER_AGENT}, timeout=10)
     text = r.text.strip()
-    m = re.fullmatch(r"{}\((.*)\);?".format(re.escape(callback)), text, re.DOTALL)
+    _log("loadConfig status={} body={}".format(r.status_code, text[:300]))
     try:
-        payload = json.loads(m.group(1) if m else text)
-    except json.JSONDecodeError:
+        payload = _parse_jsonp(text)
+    except ValueError:
         raise RuntimeError("loadConfig 响应格式异常：{}".format(text[:200]))
     if str(payload.get("code", "0")) == "0" or not isinstance(payload.get("data"), dict):
         raise RuntimeError("loadConfig 被拒绝：{}".format(text[:200]))
@@ -158,7 +351,7 @@ def portal_login_flow(account, password):
         ("wlan_user_mac", terminal["mac"]),
         ("wlan_vlan_id", terminal["vlan"]),
         ("wlan_ac_ip", ""), ("wlan_ac_name", ""),
-        ("authex_enable", ""), ("jsVersion", "4.5"),
+        ("authex_enable", ""), ("jsVersion", JS_VERSION),
         ("terminal_type", "1"), ("lang", "zh-cn"),
         ("user_agent", USER_AGENT),
         ("enable_r3", str(config.get("enable_r3", "0"))),
@@ -182,12 +375,17 @@ def portal_login_flow(account, password):
                     headers={"Accept": "*/*", "Referer": PORTAL_URL, "User-Agent": USER_AGENT},
                     timeout=15)
     text = r.text.strip()
-    m = re.search(r"{}\((.*)\);?".format(re.escape(callback)), text, re.DOTALL)
+    _log("login status={} body={}".format(r.status_code, text[:300]))
     try:
-        result = json.loads(m.group(1) if m else text)
-    except json.JSONDecodeError:
+        result = _parse_jsonp(text)
+    except ValueError:
         raise RuntimeError("登录响应格式异常：{}".format(text[:300]))
-    return result.get("result", 0), str(result.get("msg", "未知错误"))
+    code = result.get("result", 0)
+    try:
+        code = int(code)
+    except (TypeError, ValueError):
+        pass
+    return code, str(result.get("msg", "未知错误"))
 
 
 def portal_logout_flow():
@@ -219,7 +417,11 @@ def do_drag(event):
     root.geometry(f"+{x}+{y}")
 
 def close_window():
-    root.quit()
+    try:
+        root.destroy()
+    except tk.TclError:
+        pass
+    os._exit(0)
 
 def minimize_window():
     """无边框窗口不能用 Tk 的 iconify，直接走 Win32 最小化。"""
@@ -419,7 +621,7 @@ def logout():
     show_login_interface()
 
 # ===== UI（v2.3 单页状态驱动）=====
-APP_VERSION = "2.3"
+APP_VERSION = "2.4.0"
 
 import threading
 import queue
@@ -440,7 +642,7 @@ RED = "#E5484D"
 FONT = "Microsoft YaHei UI"
 
 WIN_W = 440
-WIN_H = 636
+WIN_H = 670
 
 SCALE = 1.0
 
@@ -453,6 +655,12 @@ except Exception:
 _IMG_CACHE = {}
 _UI_QUEUE = queue.Queue()
 STATE = {"online": None, "busy": False}
+_UPDATE_CHECKED = False
+_UPDATE_CHECKING = False
+UPDATE_AVAILABLE = False
+UPDATE_URL = RELEASES_URL
+UPDATE_TAG = ""
+_UPDATE_BANNER_TOKEN = 0
 
 
 def S(value):
@@ -830,6 +1038,10 @@ def _link_row(parent, bg=BG):
     row = tk.Frame(parent, bg=bg)
     tk.Label(row, text="v{}".format(APP_VERSION), bg=bg, fg=MUTED,
              font=(FONT, 9)).pack(side="left")
+    check = tk.Label(row, text="检查更新", bg=bg, fg=ACCENT, cursor="hand2",
+                     font=(FONT, 9, "underline"))
+    check.pack(side="left", padx=(S(10), 0))
+    check.bind("<Button-1>", lambda e: _start_update_check(True))
     link = tk.Label(row, text="项目地址", bg=bg, fg=ACCENT, cursor="hand2",
                     font=(FONT, 9, "underline"))
     link.pack(side="right")
@@ -837,24 +1049,13 @@ def _link_row(parent, bg=BG):
     return row
 
 
-PROBE_URLS = ("http://connect.rom.miui.com/generate_204",
-              "http://wifi.vivo.com.cn/generate_204")
-
-
 def check_online():
-    """能拿到 204 说明已经通过认证、可以正常上网。"""
-    for url in PROBE_URLS:
-        session = requests.Session()
-        session.trust_env = False
-        session.verify = False
-        try:
-            r = session.get(url, timeout=5, allow_redirects=False,
-                            headers={"User-Agent": USER_AGENT})
-            if r.status_code == 204:
-                return True
-        except requests.exceptions.RequestException:
-            continue
-    return False
+    """以认证网关的在线列表为准，避免代理环境下的 204 误判。"""
+    _ensure_api_port()
+    session = requests.Session()
+    session.trust_env = False
+    session.verify = False
+    return _portal_online_session(session) is not None
 
 
 def _post(fn, *args):
@@ -865,9 +1066,18 @@ def _poll_queue():
     try:
         while True:
             fn, args = _UI_QUEUE.get_nowait()
-            fn(*args)
+            try:
+                fn(*args)
+            except Exception as exc:
+                _log("UI callback {} failed: {!r}".format(
+                    getattr(fn, "__name__", fn), exc))
     except queue.Empty:
         pass
+    if STATE.get("busy") and time.time() - STATE.get("busy_since", 0) > 120:
+        STATE["busy"] = False
+        _set_status("error", "操作超时", "已自动恢复，请重试")
+        _render_button()
+        _log("busy state auto-reset after timeout")
     root.after(80, _poll_queue)
 
 
@@ -911,6 +1121,7 @@ def _apply_status(online):
     STATE["online"] = online
     if online:
         _set_status("online", "已连接 · 校园网可正常使用", "如需切换账号，请先退出登录")
+        root.after(1500, lambda: _start_update_check(False))
     else:
         _set_status("offline", "未连接 · 请输入账号登录", "")
         if not _AUTO_TRIED and auto_login is not None and auto_login.get():
@@ -955,6 +1166,7 @@ def _login_worker(account, password):
 
 def _after_login(ok, msg):
     STATE["busy"] = False
+    STATE["busy_since"] = 0
     STATE["online"] = True if ok else False
     if ok:
         _set_status("online", "已连接 · 校园网可正常使用", "如需切换账号，请先退出登录")
@@ -978,7 +1190,7 @@ def _logout_worker(account):
     except Exception as e:
         _post(_after_logout, False, "程序异常：{}: {}".format(type(e).__name__, e))
         return
-    if result == 1:
+    if result == 1 or "没有在线会话" in msg:
         _post(_after_logout, True, msg)
     else:
         _post(_after_logout, False, msg)
@@ -997,10 +1209,8 @@ def _wait_until_offline(seconds):
 
 def _after_logout(ok, msg):
     """网关的返回不可靠，最终以“探测是否还能上网”为准。"""
-    STATE["busy"] = True
-    STATE["busy_text"] = "正在确认退出结果…"
+    _start_busy("正在确认退出结果…")
     _set_status("checking", "正在确认退出结果…", "")
-    _render_button()
     threading.Thread(target=_confirm_logout,
                      args=(ok, msg, STATE.get("account", "")), daemon=True).start()
 
@@ -1018,19 +1228,26 @@ def _confirm_logout(ok, msg, account):
 
 
 def _finish_logout_check(online, ok, msg):
+    global _AUTO_TRIED
     STATE["busy"] = False
+    STATE["busy_since"] = 0
     STATE["online"] = bool(online)
     if not online:
+        _AUTO_TRIED = True
         sub = "网络已断开，可随时重新登录" if ok else "网关未返回成功标识，但已确认离线"
         _set_status("offline", "已退出登录", sub)
     else:
-        _set_status("error", "退出失败",
-                    msg if not ok else "网关返回成功但仍能上网，注销可能未生效，请稍后重试")
+        if "数据为空" in msg:
+            sub = "自动注销未成功，可到门户“自服务”手动注销"
+        else:
+            sub = msg if not ok else "网关返回成功但仍能上网，注销可能未生效"
+        _set_status("error", "退出失败", sub)
     _render_button()
 
 
 def _start_busy(text):
     STATE["busy"] = True
+    STATE["busy_since"] = time.time()
     STATE["busy_text"] = text
     _render_button()
 
@@ -1068,10 +1285,12 @@ def do_logout():
     if not account:
         load_config_into_ui()
         account = entry_id.get().strip()
-    STATE["account"] = account
+    suffix = SERVER_SUFFIX.get(var_server.get())
+    full = account if suffix is None else "{}@{}".format(account, suffix)
+    STATE["account"] = full
     _start_busy("正在退出…")
     _set_status("checking", "正在退出登录…", "")
-    threading.Thread(target=_logout_worker, args=(account,), daemon=True).start()
+    threading.Thread(target=_logout_worker, args=(full,), daemon=True).start()
 
 
 def save_config(account, suffix, password, auto):
@@ -1124,42 +1343,74 @@ def load_config_into_ui():
 
 
 def portal_logout_flow(account):
-    """新版注销：必须带上本机 IP 等参数，否则网关回“注销操作非本机终端”。"""
+    """按门户自身的注销方式调用：优先不传账号/IP，由网关按源 IP 识别。"""
+    _ensure_api_port()
     session = requests.Session()
     session.verify = False
     session.trust_env = False
-    headers = {"User-Agent": USER_AGENT}
-    client_ip = ""
-    mac = "000000000000"
-    vlan = "0"
-    try:
-        page = session.get(PORTAL_URL, headers=headers, timeout=10).text
-        client_ip = _read_js_string(page, "ss5")
-        mac = re.sub(r"[^0-9a-fA-F]", "", _read_js_string(page, "ss4", "")) or mac
-        vlan = _read_js_string(page, "vlanid", "0") or "0"
-    except requests.exceptions.RequestException:
-        pass
+    headers = {"User-Agent": USER_AGENT, "Referer": PORTAL_URL}
+    info = _portal_online_session(session)
+    if not info:
+        _log("logout skipped: no online session for this IP")
+        return 0, "当前没有在线会话，请直接登录"
+
+    ok, self_msg = _self_service_offline(session, account, info)
+    if ok:
+        return 1, self_msg
+    _log("self-service logout unavailable: {}".format(self_msg))
+
     callback = "dr{}".format(time.time_ns() % 1000000000)
+
+    # 1. 官方 logout_portal()：ac_logout>0 时的固定参数
     params = {
-        "user_account": account or "",
-        "wlan_user_ip": client_ip,
-        "wlan_user_mac": mac,
-        "wlan_vlan_id": vlan,
+        "callback": callback,
+        "login_method": "1",
+        "user_account": "drcom",
+        "user_password": "123",
+        "ac_logout": "1",
+        "register_mode": "1",
+        "wlan_user_ip": info["ip"],
+        "wlan_user_ipv6": "",
+        "wlan_vlan_id": info["vlan"],
+        "wlan_user_mac": "000000000000",
         "wlan_ac_ip": "",
         "wlan_ac_name": "",
-        "callback": callback,
-        "jsVersion": "4.5",
+        "jsVersion": JS_VERSION,
+        "v": str(random.randrange(500, 10500)),
         "lang": "zh",
     }
     r = session.get(PORTAL_LOGOUT_URL, params=params,
-                    headers={"Referer": PORTAL_URL, **headers}, timeout=15)
+                    headers=headers, timeout=15)
     text = r.text.strip()
-    m = re.search(r"{}\((.*)\);?".format(re.escape(callback)), text, re.DOTALL)
+    _log("logout portal status={} body={}".format(r.status_code, text[:300]))
     try:
-        payload = json.loads(m.group(1) if m else text)
-    except json.JSONDecodeError:
+        payload = _parse_jsonp(text)
+    except ValueError:
+        payload = {}
+    code = payload.get("result", payload.get("code", 0))
+    try:
+        code = int(code)
+    except (TypeError, ValueError):
+        code = 0
+    if code == 1:
+        return code, str(payload.get("msg", "注销成功"))
+
+    # 2. 本地认证旧页面：空参数注销
+    r = session.get(PORTAL_LOGOUT_URL,
+                    params={"callback": callback, "jsVersion": JS_VERSION},
+                    headers=headers, timeout=15)
+    text = r.text.strip()
+    _log("logout default status={} body={}".format(r.status_code, text[:300]))
+    try:
+        payload = _parse_jsonp(text)
+    except ValueError:
         raise RuntimeError("注销响应格式异常：{}".format(text[:200]))
-    return payload.get("result", 0), str(payload.get("msg", "未知错误"))
+    code = payload.get("result", payload.get("code", 0))
+    try:
+        code = int(code)
+    except (TypeError, ValueError):
+        code = 0
+    return code, str(payload.get("msg", "未知错误"))
 
 
 def update_startup_button():
@@ -1204,9 +1455,87 @@ def _set_hint(text):
         status_sub.configure(text=text)
 
 
+def _hide_update_banner(token=None):
+    if token is not None and token != _UPDATE_BANNER_TOKEN:
+        return
+    if update_banner is not None:
+        update_banner.pack_forget()
+
+
+def _show_update_banner(text, color=ACCENT, clickable=False, hide_after=0):
+    global _UPDATE_BANNER_TOKEN
+    if update_banner is None:
+        return
+    _UPDATE_BANNER_TOKEN += 1
+    token = _UPDATE_BANNER_TOKEN
+    update_banner.configure(
+        text=text,
+        fg=color,
+        cursor="hand2" if clickable else "",
+        font=(FONT, 9, "underline") if clickable else (FONT, 9),
+    )
+    update_banner.pack_forget()
+    update_banner.pack(side="bottom", fill="x", padx=S(26), pady=(0, S(2)))
+    if hide_after:
+        root.after(hide_after, lambda: _hide_update_banner(token))
+
+
+def _on_update_banner(event=None):
+    if UPDATE_AVAILABLE and UPDATE_URL:
+        webbrowser.open_new(UPDATE_URL)
+    else:
+        _start_update_check(True)
+
+
+def _start_update_check(manual=False):
+    global _UPDATE_CHECKED, _UPDATE_CHECKING
+    if _UPDATE_CHECKING:
+        return
+    if not manual and _UPDATE_CHECKED:
+        return
+    _UPDATE_CHECKED = True
+    _UPDATE_CHECKING = True
+    if manual:
+        _show_update_banner("正在检查更新…", MUTED, False)
+    threading.Thread(target=_update_check_worker, args=(manual,), daemon=True).start()
+
+
+def _update_check_worker(manual):
+    try:
+        result = _latest_release()
+    except Exception as exc:
+        _post(_update_check_done, manual, None, str(exc) or type(exc).__name__)
+        return
+    _post(_update_check_done, manual, result, "")
+
+
+def _update_check_done(manual, result, error):
+    global _UPDATE_CHECKING, UPDATE_AVAILABLE, UPDATE_URL, UPDATE_TAG
+    _UPDATE_CHECKING = False
+    if error or not result:
+        _log("update check failed: {}".format(error))
+        if manual:
+            _show_update_banner("检查更新失败，点击重试", RED, True)
+        return
+    tag = str(result.get("tag") or "")
+    url = result.get("url") or RELEASES_URL
+    UPDATE_TAG = tag
+    if _is_newer_version(tag, APP_VERSION):
+        UPDATE_AVAILABLE = True
+        UPDATE_URL = url
+        _show_update_banner("发现新版本 {} · 点击下载".format(tag), ACCENT, True)
+        _log("update available local={} remote={}".format(APP_VERSION, tag))
+    else:
+        UPDATE_AVAILABLE = False
+        UPDATE_URL = RELEASES_URL
+        if manual:
+            _show_update_banner("已是最新版本 v{}".format(APP_VERSION), MUTED,
+                                False, hide_after=4500)
+
+
 def show_main_interface():
     global entry_id, entry_password, var_server, auto_login
-    global startup_btn, primary_btn, status_dot, status_label, status_sub
+    global startup_btn, primary_btn, status_dot, status_label, status_sub, update_banner
 
     for widget in root.winfo_children():
         widget.destroy()
@@ -1272,6 +1601,9 @@ def show_main_interface():
     primary_btn.pack(fill="x")
 
     _link_row(body).pack(side="bottom", fill="x", padx=S(26), pady=S(14))
+    update_banner = tk.Label(body, text="", bg=BG, fg=ACCENT,
+                             font=(FONT, 9), anchor="center")
+    update_banner.bind("<Button-1>", _on_update_banner)
 
     load_config_into_ui()
     auto_login.trace_add("write", lambda *a: _persist_toggle())
@@ -1473,6 +1805,7 @@ primary_btn = None
 status_dot = None
 status_label = None
 status_sub = None
+update_banner = None
 _AUTO_TRIED = False
 
 _enable_dpi_awareness()
