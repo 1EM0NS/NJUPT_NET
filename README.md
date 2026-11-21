@@ -1,15 +1,15 @@
-# 🌐 南邮校园网 v2.9.0
+﻿# 🌐 南邮校园网 v3.0.0
 
 > 南京邮电大学校园网登录工具，WPF + WPF-UI 原生界面，支持一键登录 / 退出、开机自启和自动更新。
 
-从 v2.9.0 起，项目由 Python + Tkinter 重写为 **C# / .NET 8 + WPF**，并以 **Setup 安装包**形式分发，
+从 v3.0.0 起，项目由 Python + Tkinter 重写为 **C# / .NET 8 + WPF**，并以 **Setup 安装包**形式分发，
 不再需要把一个 `exe` 手动复制到某个目录。
 
 > 图标为自制图形（蓝色圆角底 + 白色/浅蓝双环），不含任何校徽、校名或校方标识。
 
 ---
 
-## 🆕 v2.9.0 更新
+## 🆕 v3.0.0 更新
 
 - 界面重写为 **WPF + WPF-UI**（Mica 背景、圆角、原生 Windows 控件），支持 125% / 150% 高 DPI 缩放。
 - 提供 **安装包**：开始菜单快捷方式、可选桌面快捷方式、卸载项，安装范围可选「仅为我安装」或「为所有用户安装」。
@@ -35,7 +35,7 @@
 
 ## 🚀 使用方法
 
-1. 前往 [Release 页面](https://github.com/1EM0NS/NJUPT_NET/releases) 下载最新的 `NJUPT_Net_Setup_v2.9.0.exe`
+1. 前往 [Release 页面](https://github.com/1EM0NS/NJUPT_NET/releases) 下载最新的 `NJUPT_Net_Setup_v3.0.0.exe`
 2. 双击安装，选择「仅为我安装」或「为所有用户安装」
 3. 首次运行需要安装 **.NET 8 Desktop Runtime**（安装包会检测并给出下载入口）
 4. 输入学号与密码，选择运营商，点击「立即登录」
@@ -144,7 +144,7 @@ dotnet publish .\NJUPT_NET.csproj -c Release -r win-x64 --self-contained false -
 & "$env:LOCALAPPDATA\Programs\Inno Setup 6\ISCC.exe" .\installer\NJUPT_NET.iss
 ```
 
-产物：`dist\NJUPT_Net_Setup_v2.9.0.exe`
+产物：`dist\NJUPT_Net_Setup_v3.0.0.exe`
 
 安装脚本特性：
 

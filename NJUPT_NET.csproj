@@ -9,9 +9,9 @@
     <SelfContained>false</SelfContained>
     <AssemblyName>NJUPT_NET</AssemblyName>
     <RootNamespace>NjuptNet</RootNamespace>
-    <Version>2.9.0</Version>
-    <FileVersion>2.9.0.0</FileVersion>
-    <AssemblyVersion>2.9.0.0</AssemblyVersion>
+    <Version>3.0.0</Version>
+    <FileVersion>3.0.0.0</FileVersion>
+    <AssemblyVersion>3.0.0.0</AssemblyVersion>
     <Authors>1EM0NS</Authors>
     <Product>南邮校园网</Product>
     <Description>南京邮电大学校园网登录工具</Description>
