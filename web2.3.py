@@ -1,6 +1,8 @@
 import os
 import sys
 import socket
+import hashlib
+import subprocess
 import tkinter as tk
 import webbrowser
 from tkinter import messagebox, ttk
@@ -108,6 +110,39 @@ def _is_newer_version(remote, local):
     return remote_key > local_key
 
 
+def _release_asset_url(tag, name):
+    return "https://github.com/1EM0NS/NJUPT_NET/releases/download/{}/{}".format(
+        urllib.parse.quote(str(tag), safe=""), urllib.parse.quote(str(name), safe=""))
+
+
+def _release_info(tag, url, name, data=None):
+    exe = None
+    sums = None
+    if isinstance(data, dict):
+        for asset in data.get("assets") or []:
+            if not isinstance(asset, dict):
+                continue
+            asset_name = str(asset.get("name") or "")
+            lower = asset_name.lower()
+            if lower == "njupt_net.exe" or lower.endswith(".exe"):
+                exe = asset
+            elif lower == "sha256sums.txt":
+                sums = asset
+    exe_url = (exe.get("browser_download_url") if exe else "") or \
+        _release_asset_url(tag, "NJUPT_Net.exe")
+    sums_url = (sums.get("browser_download_url") if sums else "") or \
+        _release_asset_url(tag, "SHA256SUMS.txt")
+    return {
+        "tag": tag,
+        "url": url or RELEASES_URL,
+        "name": name or tag,
+        "exe_url": exe_url,
+        "exe_size": int(exe.get("size") or 0) if exe else 0,
+        "digest": str(exe.get("digest") or "") if exe else "",
+        "sums_url": sums_url,
+    }
+
+
 def _latest_release():
     """读取 GitHub 最新正式 Release；API 限流时退回 releases/latest 跳转。"""
     session = requests.Session()
@@ -122,11 +157,8 @@ def _latest_release():
             if isinstance(data, dict):
                 tag = str(data.get("tag_name") or "").strip()
                 if tag:
-                    return {
-                        "tag": tag,
-                        "url": data.get("html_url") or RELEASES_URL,
-                        "name": data.get("name") or tag,
-                    }
+                    return _release_info(tag, data.get("html_url") or RELEASES_URL,
+                                         data.get("name") or tag, data)
         _log("update api status={} body={}".format(r.status_code, r.text[:200]))
     except (requests.exceptions.RequestException, ValueError) as exc:
         _log("update api failed: {!r}".format(exc))
@@ -138,11 +170,99 @@ def _latest_release():
             url = urllib.parse.urljoin(RELEASES_URL, location)
             tag = urllib.parse.unquote(url.rstrip("/").rsplit("/", 1)[-1])
             if tag:
-                return {"tag": tag, "url": url, "name": tag}
+                return _release_info(tag, url, tag)
         _log("update redirect status={} location={}".format(r.status_code, location))
     except requests.exceptions.RequestException as exc:
         _log("update redirect failed: {!r}".format(exc))
     raise RuntimeError("无法获取最新版本信息")
+
+
+def _normalize_sha256(value):
+    text = str(value or "").strip().lower()
+    if text.startswith("sha256:"):
+        text = text[7:]
+    return text if re.fullmatch(r"[0-9a-f]{64}", text) else ""
+
+
+def _parse_sha256_sums(text, filename="NJUPT_Net.exe"):
+    for line in str(text or "").splitlines():
+        parts = line.split()
+        if len(parts) >= 2 and parts[-1].lstrip("*").lower() == filename.lower():
+            digest = _normalize_sha256(parts[0])
+            if digest:
+                return digest
+    return ""
+
+
+def _app_dir():
+    if getattr(sys, "frozen", False):
+        return os.path.dirname(os.path.abspath(sys.executable))
+    return os.path.dirname(os.path.abspath(__file__))
+
+
+def _safe_update_tag(tag):
+    value = re.sub(r"[^0-9A-Za-z._-]+", "_", str(tag or "update")).strip("._")
+    return value or "update"
+
+
+def _ps_quote(value):
+    return "'" + str(value).replace("'", "''") + "'"
+
+
+def _build_updater_script(old_path, staged_path, backup_path, app_dir,
+                          process_id, restart=True):
+    log_path = os.path.join(app_dir, "update.log")
+    start_new = ""
+    start_old = ""
+    if restart:
+        start_new = "    Start-Process -FilePath $old -WorkingDirectory {}\n".format(
+            _ps_quote(app_dir))
+        start_old = (
+            "    if (Test-Path -LiteralPath $old) {\n"
+            "        Start-Process -FilePath $old -WorkingDirectory {}\n"
+            "    }\n"
+        ).format(_ps_quote(app_dir))
+    return (
+        "$ErrorActionPreference = 'Stop'\n"
+        "$log = {log}\n"
+        "function Write-UpdateLog([string]$message) {{\n"
+        "    Add-Content -LiteralPath $log -Value ((Get-Date -Format 'yyyy-MM-dd HH:mm:ss') + ' ' + $message) -Encoding UTF8\n"
+        "}}\n"
+        "$oldPid = {pid}\n"
+        "$deadline = (Get-Date).AddSeconds(90)\n"
+        "while ((Get-Process -Id $oldPid -ErrorAction SilentlyContinue) -and ((Get-Date) -lt $deadline)) {{\n"
+        "    Start-Sleep -Milliseconds 400\n"
+        "}}\n"
+        "if (Get-Process -Id $oldPid -ErrorAction SilentlyContinue) {{\n"
+        "    Write-UpdateLog 'old process still running'\n"
+        "    exit 1\n"
+        "}}\n"
+        "$old = {old}\n"
+        "$staged = {staged}\n"
+        "$backup = {backup}\n"
+        "try {{\n"
+        "    if (Test-Path -LiteralPath $backup) {{ Remove-Item -LiteralPath $backup -Force }}\n"
+        "    Move-Item -LiteralPath $old -Destination $backup -Force\n"
+        "    Move-Item -LiteralPath $staged -Destination $old -Force\n"
+        "    Write-UpdateLog 'update ok'\n"
+        "{start_new}"
+        "}} catch {{\n"
+        "    Write-UpdateLog ('update failed: ' + $_.Exception.Message)\n"
+        "    if (-not (Test-Path -LiteralPath $old) -and (Test-Path -LiteralPath $backup)) {{\n"
+        "        Move-Item -LiteralPath $backup -Destination $old -Force -ErrorAction SilentlyContinue\n"
+        "    }}\n"
+        "{start_old}"
+        "    exit 1\n"
+        "}}\n"
+    ).format(
+        log=_ps_quote(log_path),
+        pid=int(process_id),
+        old=_ps_quote(old_path),
+        staged=_ps_quote(staged_path),
+        backup=_ps_quote(backup_path),
+        start_new=start_new,
+        start_old=start_old,
+    )
 
 
 def _portal_online_session(session):
@@ -621,7 +741,7 @@ def logout():
     show_login_interface()
 
 # ===== UI（v2.3 单页状态驱动）=====
-APP_VERSION = "2.4.0"
+APP_VERSION = "2.5.0"
 
 import threading
 import queue
@@ -657,9 +777,15 @@ _UI_QUEUE = queue.Queue()
 STATE = {"online": None, "busy": False}
 _UPDATE_CHECKED = False
 _UPDATE_CHECKING = False
+_UPDATE_DOWNLOADING = False
+_UPDATE_INSTALLING = False
 UPDATE_AVAILABLE = False
 UPDATE_URL = RELEASES_URL
 UPDATE_TAG = ""
+UPDATE_EXE_URL = ""
+UPDATE_SUMS_URL = ""
+UPDATE_EXE_SIZE = 0
+UPDATE_DIGEST = ""
 _UPDATE_BANNER_TOKEN = 0
 
 
@@ -1481,8 +1607,8 @@ def _show_update_banner(text, color=ACCENT, clickable=False, hide_after=0):
 
 
 def _on_update_banner(event=None):
-    if UPDATE_AVAILABLE and UPDATE_URL:
-        webbrowser.open_new(UPDATE_URL)
+    if UPDATE_AVAILABLE:
+        _start_update_download()
     else:
         _start_update_check(True)
 
@@ -1511,6 +1637,7 @@ def _update_check_worker(manual):
 
 def _update_check_done(manual, result, error):
     global _UPDATE_CHECKING, UPDATE_AVAILABLE, UPDATE_URL, UPDATE_TAG
+    global UPDATE_EXE_URL, UPDATE_SUMS_URL, UPDATE_EXE_SIZE, UPDATE_DIGEST
     _UPDATE_CHECKING = False
     if error or not result:
         _log("update check failed: {}".format(error))
@@ -1523,14 +1650,190 @@ def _update_check_done(manual, result, error):
     if _is_newer_version(tag, APP_VERSION):
         UPDATE_AVAILABLE = True
         UPDATE_URL = url
-        _show_update_banner("发现新版本 {} · 点击下载".format(tag), ACCENT, True)
+        UPDATE_EXE_URL = str(result.get("exe_url") or "")
+        UPDATE_SUMS_URL = str(result.get("sums_url") or "")
+        UPDATE_EXE_SIZE = int(result.get("exe_size") or 0)
+        UPDATE_DIGEST = str(result.get("digest") or "")
+        _show_update_banner("发现新版本 {} · 点击更新".format(tag), ACCENT, True)
         _log("update available local={} remote={}".format(APP_VERSION, tag))
     else:
         UPDATE_AVAILABLE = False
         UPDATE_URL = RELEASES_URL
+        UPDATE_EXE_URL = ""
+        UPDATE_SUMS_URL = ""
+        UPDATE_EXE_SIZE = 0
+        UPDATE_DIGEST = ""
         if manual:
             _show_update_banner("已是最新版本 v{}".format(APP_VERSION), MUTED,
                                 False, hide_after=4500)
+
+
+def _fmt_size(num):
+    try:
+        value = float(num)
+    except (TypeError, ValueError):
+        return "?"
+    for unit in ("B", "KB", "MB", "GB"):
+        if value < 1024 or unit == "GB":
+            return "{:.0f} {}".format(value, unit) if unit == "B" else "{:.1f} {}".format(value, unit)
+        value /= 1024.0
+
+
+def _resolve_update_hash():
+    digest = _normalize_sha256(UPDATE_DIGEST)
+    if digest:
+        return digest
+    if not UPDATE_SUMS_URL:
+        return ""
+    try:
+        r = requests.get(UPDATE_SUMS_URL, timeout=(3.05, 10),
+                         headers={"User-Agent": "NJUPT_Net-updater"})
+        if r.status_code == 200:
+            digest = _parse_sha256_sums(r.text, "NJUPT_Net.exe")
+            if digest:
+                return digest
+        _log("update sums status={}".format(r.status_code))
+    except requests.exceptions.RequestException as exc:
+        _log("update sums failed: {!r}".format(exc))
+    return ""
+
+
+def _start_update_download():
+    global _UPDATE_DOWNLOADING
+    if _UPDATE_DOWNLOADING or _UPDATE_INSTALLING:
+        return
+    if STATE.get("busy"):
+        _show_update_banner("正在登录或注销，完成后再更新", MUTED, False, hide_after=4000)
+        return
+    if not getattr(sys, "frozen", False):
+        _log("update skipped: not frozen")
+        if UPDATE_URL:
+            webbrowser.open_new(UPDATE_URL)
+        return
+    if not UPDATE_EXE_URL:
+        _show_update_banner("更新地址缺失，已打开下载页", RED, False, hide_after=5000)
+        if UPDATE_URL:
+            webbrowser.open_new(UPDATE_URL)
+        return
+    _UPDATE_DOWNLOADING = True
+    _show_update_banner("正在准备更新 {}…".format(UPDATE_TAG), MUTED, False)
+    threading.Thread(target=_update_download_worker, daemon=True).start()
+
+
+def _update_progress(text, color=MUTED):
+    _show_update_banner(text, color, False)
+
+
+def _update_download_worker():
+    staging = ""
+    try:
+        digest = _resolve_update_hash()
+        if not digest:
+            raise RuntimeError("发布包缺少 SHA256 校验值，已取消")
+        app_dir = _app_dir()
+        staging = os.path.join(
+            app_dir, "NJUPT_Net.exe.new-{}".format(_safe_update_tag(UPDATE_TAG)))
+        session = requests.Session()
+        session.headers.update({"User-Agent": "NJUPT_Net-updater"})
+        r = session.get(UPDATE_EXE_URL, stream=True, timeout=(5, 30))
+        if r.status_code != 200:
+            raise RuntimeError("下载失败 HTTP {}".format(r.status_code))
+        total = int(r.headers.get("Content-Length") or 0) or int(UPDATE_EXE_SIZE or 0)
+        hasher = hashlib.sha256()
+        received = 0
+        last_percent = -1
+        header = b""
+        with open(staging, "wb") as f:
+            for chunk in r.iter_content(chunk_size=131072):
+                if not chunk:
+                    continue
+                if len(header) < 2:
+                    header += chunk[:2 - len(header)]
+                f.write(chunk)
+                hasher.update(chunk)
+                received += len(chunk)
+                if total > 0:
+                    percent = int(received * 100 / total)
+                    if percent >= last_percent + 5 or percent == 100:
+                        last_percent = percent
+                        text = "正在下载 {}% · {} / {}".format(
+                            percent, _fmt_size(received), _fmt_size(total))
+                        _post(_update_progress, text, ACCENT)
+                else:
+                    _post(_update_progress,
+                          "正在下载 · {} ".format(_fmt_size(received)), ACCENT)
+            f.flush()
+            os.fsync(f.fileno())
+        if received <= 0:
+            raise RuntimeError("下载内容为空")
+        if UPDATE_EXE_SIZE and received != int(UPDATE_EXE_SIZE):
+            raise RuntimeError("文件大小不符（{} != {}）".format(
+                received, UPDATE_EXE_SIZE))
+        actual = hasher.hexdigest()
+        if actual != digest:
+            raise RuntimeError("SHA256 校验失败")
+        if header != b"MZ":
+            raise RuntimeError("文件不是有效的 Windows 程序")
+        _log("update downloaded size={} sha256={}".format(received, actual))
+    except Exception as exc:
+        if staging:
+            try:
+                if os.path.exists(staging):
+                    os.remove(staging)
+            except OSError:
+                pass
+        _post(_update_download_done, False, "", str(exc) or type(exc).__name__)
+        return
+    _post(_update_download_done, True, staging, "")
+
+
+def _update_download_done(ok, staging, msg):
+    global _UPDATE_DOWNLOADING, _UPDATE_INSTALLING
+    _UPDATE_DOWNLOADING = False
+    if not ok:
+        _log("update download failed: {}".format(msg))
+        _show_update_banner("更新失败：{} · 点击重试".format(msg), RED, True)
+        return
+    _UPDATE_INSTALLING = True
+    _show_update_banner("已校验 {}，正在重启完成更新…".format(UPDATE_TAG), GREEN, False)
+    root.after(600, lambda: _launch_updater(staging))
+
+
+def _launch_updater(staging):
+    global _UPDATE_INSTALLING
+    old_path = os.path.abspath(sys.executable)
+    app_dir = _app_dir()
+    backup = old_path + ".old-" + _safe_update_tag(UPDATE_TAG)
+    script = _build_updater_script(old_path, staging, backup, app_dir, os.getpid())
+    encoded = base64.b64encode(script.encode("utf-16-le")).decode("ascii")
+    flags = getattr(subprocess, "DETACHED_PROCESS", 0x00000008) | \
+        getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000)
+    try:
+        subprocess.Popen(
+            ["powershell", "-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden",
+             "-ExecutionPolicy", "Bypass", "-EncodedCommand", encoded],
+            cwd=app_dir,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            creationflags=flags,
+            close_fds=True,
+        )
+    except Exception as exc:
+        _log("update spawn failed: {!r}".format(exc))
+        _UPDATE_INSTALLING = False
+        _show_update_banner("无法启动更新程序 · 点击重试", RED, True)
+        return
+    _log("updater spawned for {}".format(UPDATE_TAG))
+    _exit_for_update()
+
+
+def _exit_for_update():
+    try:
+        root.destroy()
+    except Exception:
+        pass
+    os._exit(0)
 
 
 def show_main_interface():
