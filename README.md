@@ -1,136 +1,171 @@
-# 🌐 NJUPT 校园网助手 v2.5.0
+# 🌐 南邮校园网 v2.9.0
 
-> 一个基于 Python + Tkinter 编写的南京邮电大学校园网登录小工具，解决校园网登录繁琐的问题。  
-> 打包为 `exe` 文件后，双击即可使用，无需每次打开浏览器手动输入账号密码。
+> 南京邮电大学校园网登录工具，WPF + WPF-UI 原生界面，支持一键登录 / 退出、开机自启和自动更新。
+
+从 v2.9.0 起，项目由 Python + Tkinter 重写为 **C# / .NET 8 + WPF**，并以 **Setup 安装包**形式分发，
+不再需要把一个 `exe` 手动复制到某个目录。
+
+> 图标为自制图形（蓝色圆角底 + 白色/浅蓝双环），不含任何校徽、校名或校方标识。
 
 ---
 
-## 🆕 v2.5.0 更新
+## 🆕 v2.9.0 更新
 
-- 更新提示改为**点击直接更新**：自动下载新版 `NJUPT_Net.exe` 并显示进度。
-- 下载完成后强制校验 **SHA256**（优先读取 Release 的 `SHA256SUMS.txt`，缺失时使用 GitHub API 摘要），并检查文件头与大小；校验不通过绝不替换。
-- 校验通过后由独立更新脚本等待旧进程退出，备份旧版本、替换并**自动重启**；替换失败会自动回滚旧版本。
-- 更新过程与结果写入程序目录的 `update.log`，便于排查。
-- 登录/注销进行中不会触发更新，避免操作中断。
-
-## 🆕 v2.4.0 更新
-
-- 兼容校方新的 JSONP 返回格式（固定回调 `dr0001`），修复 `loadConfig 响应格式异常`。
-- 按门户 `a41.js` 当前配置使用 HTTPS **804** / HTTP **803**，并保留 **802** 兼容回退。
-- 在线状态改用网关 `online_list` 检测；注销优先通过门户“自服务”的 `tooffline` 接口踢掉本机会话，实测可注销运营商 `@cmcc` 会话，网关 `logout` 作为回退。
-- 新增 GitHub Release 更新检查：联网后后台查询，底部“检查更新”可手动检查；发现新版时显示 Release 下载入口。
-- 修复更新提示条被窗口底部裁切的问题，并给底部状态提示预留高度。
-- 后台操作超过 120 秒自动恢复，界面不会一直卡在“处理中”。
-- 新增 `njupt_net.log` 诊断日志（不记录密码）。
-- 修复注销后可能被自动登录立刻拉回的问题。
-
-## 🆕 v2.3 更新
-
-- 界面重做：渐变标题栏、卡片式表单、运营商分段选择、密码显示/隐藏、开关式自动登录。
-- 单页状态驱动：启动即检测网络状态，同一页面显示“已连接 / 未连接”，主按钮随之在“立即登录 / 退出登录”之间切换。
-- 全流程不再弹窗，错误与结果都在状态区就地提示。
-- 开启高 DPI 感知并按系统缩放布局，125% / 150% 缩放下文字不再发虚。
-- 圆角、圆形控件改用 4 倍超采样贴图绘制，边缘不再有锯齿。
+- 界面重写为 **WPF + WPF-UI**（Mica 背景、圆角、原生 Windows 控件），支持 125% / 150% 高 DPI 缩放。
+- 提供 **安装包**：开始菜单快捷方式、可选桌面快捷方式、卸载项，安装范围可选「仅为我安装」或「为所有用户安装」。
+- 密码改用 **Windows DPAPI（当前用户）** 加密保存在 `%APPDATA%\NJUPT_NET\config.json`，不再明文落盘。
+- 首次运行会自动迁移旧版程序目录下的 `config.bin`。
+- 网络请求强制 **直连认证网关**（`UseProxy = false`），并内置门户 IP 兜底，开启代理或 FlClash TUN 时也能登录。
+- 自动检查 GitHub Release（API 限流时自动降级），有安装包时校验大小与 SHA256 后静默升级，没有安装包时引导到发布页。
+- 后台操作超过 120 秒自动恢复，界面不会卡在「处理中」。
+- 诊断日志位于 `%APPDATA%\NJUPT_NET\njupt_net.log`（不记录密码）。
 
 ---
 
 ## ✨ 功能特性
 
-- ✅ 支持 **校园网 / 中国移动 / 中国电信** 登录
-- ✅ 支持 **自动登录**（保存账号密码，下次自动一键登录）
-- ✅ 支持 **开机自启**（自动启动并完成登录）
-- ✅ 支持 **一键登出**
-- ✅ 配置文件本地保存（`config.bin`），简单安全
-- ✅ 打包为 **Windows 可执行文件**，无需额外安装 Python 环境
-
----
-
-## 📸 软件截图
-
-### v2.4.0 单页界面
-
-<img src="preview_online.png" width="330">
-&nbsp;&nbsp;
-<img src="preview_offline.png" width="330">
-
-
-
+- ✅ 支持 **校园网 / 中国移动（@cmcc）/ 中国电信（@njxy）/ 中国联通（@lt）**
+- ✅ 一键登录、一键退出（优先走门户「自服务」注销，失败回退网关 `logout`）
+- ✅ 注销后轮询在线状态确认，不会「假成功」
+- ✅ 启动时自动登录（可选）
+- ✅ 开机自启（写入 `HKCU\...\CurrentVersion\Run`）
+- ✅ 自动检查更新，下载校验后静默安装
 
 ---
 
 ## 🚀 使用方法
 
-1. 前往 [Release 页面](https://github.com/1EM0NS/NJUPT_NET/releases) 下载最新的 `NJUPT_Net.exe`
-2. 双击运行程序，输入账号和密码
-3. 选择运营商（默认校园网）
-4. 可选：
-   - 勾选 **自动登录** → 下次自动完成登录
-   - 点击 **开机自启** → 开机后自动运行程序并登录
-5. 点击 `保存并登录` 即可
+1. 前往 [Release 页面](https://github.com/1EM0NS/NJUPT_NET/releases) 下载最新的 `NJUPT_Net_Setup_v2.9.0.exe`
+2. 双击安装，选择「仅为我安装」或「为所有用户安装」
+3. 首次运行需要安装 **.NET 8 Desktop Runtime**（安装包会检测并给出下载入口）
+4. 输入学号与密码，选择运营商，点击「立即登录」
+5. 可选：
+   - 打开 **启动时自动登录** → 下次启动自动完成登录
+   - 点击 **开机自启** → 开机后自动运行程序
+
+> 未签名的安装包首次运行会出现 SmartScreen 提示，点击「更多信息 → 仍要运行」即可。
 
 ---
 
 ## ⚙️ 技术细节
 
-- 界面使用 **Tkinter** 自定义标题栏 & 样式
-- 网络请求使用 `requests`，直连校园网认证网关（`p.njupt.edu.cn` → `10.10.244.11`）
-- 认证接口：`https://p.njupt.edu.cn:804/eportal/portal/{loadConfig,login,logout}`
-- 用户配置信息保存于本地 `config.bin` 文件
-- 使用 `winreg` 操作注册表实现开机自启
-- 支持打包为单个 `exe` 文件（推荐使用 [PyInstaller](https://pyinstaller.org/)）
+- 运行时：`.NET 8`（`net8.0-windows`，`win-x64`，**框架依赖**发布）
+- 界面：`WPF` + [`WPF-UI`](https://github.com/lepoco/wpfui) 4.0.3
+- 安装包：`Inno Setup 6`
+- 认证接口：`https://p.njupt.edu.cn:804/eportal/portal/{loadConfig,login,logout,online_list,self}`（804 不可用时回退 802）
+- 门户域名解析失败时回退到已知 IP `10.10.244.11`，TLS 仍按原域名握手
+- 配置：`%APPDATA%\NJUPT_NET\config.json`，密码为 DPAPI 密文
+- 日志：`%APPDATA%\NJUPT_NET\njupt_net.log`
 
 ---
 
 ## 📂 项目结构
 
-```bash
+```text
 NJUPT_NET/
-├─ njupt.png        # 程序图标
-├─ web2.3.py         # 主程序源码（当前版本）
-├─ config.bin       # 本地保存的用户配置（运行后生成）
-└─ njupt.ico.exe   #程序图标
+├─ NJUPT_NET.csproj         # .NET 8 WPF 工程
+├─ App.xaml / App.xaml.cs
+├─ MainWindow.xaml / MainWindow.xaml.cs
+├─ Models/
+│  ├─ AppConfig.cs
+│  └─ PortalSession.cs
+├─ Services/
+│  ├─ PortalService.cs      # 门户协议：在线检测 / 登录 / 注销
+│  ├─ ConfigService.cs      # 配置读写 + 旧版 config.bin 迁移
+│  ├─ StartupService.cs     # 开机自启
+│  ├─ UpdateService.cs      # GitHub Release 检查与升级
+│  └─ Log.cs
+├─ Resources/
+│  ├─ app.ico               # 自制应用图标（16~256 多尺寸）
+│  └─ app-icon-256.png      # 图标 256px 预览图
+├─ tools/
+│  ├─ icon-lib.ps1          # 图标绘制逻辑（大尺寸细弧线 / 小尺寸实心环）
+│  ├─ make-icon.ps1         # 生成 app.ico 与 256px 预览
+│  └─ icon-preview.ps1      # 把 ico 各尺寸渲染成对照图，便于检查
+├─ installer/
+│  ├─ NJUPT_NET.iss
+│  └─ ChineseSimplified.isl
+├─ legacy/                  # v2.5.0 Python + Tkinter 旧版（保留备查）
+└─ publish/                 # dotnet publish 输出（构建生成，不入库）
 ```
+
+### 应用图标
+
+图标由 `tools/make-icon.ps1` 用 System.Drawing 生成，纯 PowerShell、无外部依赖：
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\make-icon.ps1
+```
+
+会输出 `Resources/app.ico`（16/24/32/48/64/128/256 七种尺寸）和 `Resources/app-icon-256.png`。
+16/24/32 使用实心双环保证小尺寸清晰，48 以上使用带圆头的细弧线。
+检查各尺寸效果：
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\icon-preview.ps1
+```
+
+工程、安装包、标题栏统一引用 `Resources/app.ico`，不使用任何校方标识。
+注意 `tools/*.ps1` 必须保持纯 ASCII：Windows PowerShell 5.1 会把无 BOM 文件按 ANSI 读取，
+中文注释会吞掉下一行代码。
+
+### 旧版 Python 程序
+
+v2.5.0 及更早版本位于 `legacy/`：
+
+- `legacy/web2.3.py`：Tkinter 主程序
+- `legacy/README_v2.5.0.md`：旧版说明文档
+- `legacy/NJUPT_Net.spec`：PyInstaller 打包配置
+
+旧版仍可自行打包，但不再接收功能更新；新版本请使用 Setup 安装包。
 
 ---
 
-## 🔧 打包方法
+## 🔧 本地构建
 
-本项目推荐使用 **PyInstaller** 打包成单个可执行文件。  
+需要 [.NET 8 SDK](https://dotnet.microsoft.com/download/dotnet/8.0)。
 
-### 安装依赖
-```bash
-pip install pyinstaller requests pillow pywin32
+```powershell
+# 还原依赖
+dotnet restore .\NJUPT_NET.csproj
+
+# 编译
+dotnet build .\NJUPT_NET.csproj -c Release
+
+# 发布（框架依赖）
+dotnet publish .\NJUPT_NET.csproj -c Release -r win-x64 --self-contained false -o .\publish
 ```
 
-### 打包命令
-在项目根目录下执行：
-```bash
-pyinstaller --name=NJUPT_Net --onefile -w web2.3.py -i njupt.ico --add-data "njupt.png;."
+### 生成安装包
+
+安装 [Inno Setup 6](https://jrsoftware.org/isdl.php)，然后：
+
+```powershell
+& "$env:LOCALAPPDATA\Programs\Inno Setup 6\ISCC.exe" .\installer\NJUPT_NET.iss
 ```
 
-参数说明：
-- `-F` → 打包为单文件
-- `-w` → 去掉命令行窗口（GUI 程序推荐加）
-- `-i njupt.png` → 指定程序图标（可选）
-- `web2.3.py` → 主程序入口
-- `pillow` 用于绘制抗锯齿的圆角控件；缺少时自动回退为纯 Canvas 绘制（边缘会有锯齿）
+产物：`dist\NJUPT_Net_Setup_v2.9.0.exe`
 
-打包完成后，生成的 `exe` 文件会在 `dist/` 目录下。
+安装脚本特性：
+
+- `PrivilegesRequired=lowest` + `PrivilegesRequiredOverridesAllowed=dialog`：安装时可选择安装范围
+- `ArchitecturesAllowed=x64compatible`：仅 64 位
+- 安装时检测 `.NET 8 Desktop Runtime`，缺失时给出官方下载入口
+- 卸载时清理开机自启注册表项，并询问是否删除账号配置
 
 ---
 
 ## 🔒 注意事项
 
-- 本工具仅供南京邮电大学校园网用户使用  
-- 账号和密码仅保存在本地，不会上传网络  
-- 如遇到登录失败，请检查账号/密码/网络环境是否正确  
-- 登录接口依赖校园网认证网关，若校方更新认证系统，可能需要更新程序  
+- 本工具仅供南京邮电大学校园网用户使用
+- 账号和密码仅保存在本地，不会上传网络
+- 登录接口依赖校园网认证网关，若校方更新认证系统，可能需要更新程序
+- 若出现 `loadConfig 响应格式异常`，请先确认已连接校园网，再查看 `njupt_net.log`
 
 ---
----
-
 
 ## 📜 License
 
 MIT License  
 你可以自由使用、修改和分发本项目，但请保留原作者信息。
+

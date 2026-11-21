@@ -1,0 +1,454 @@
+<ui:FluentWindow x:Class="NjuptNet.MainWindow"
+                 xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+                 xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+                 xmlns:ui="http://schemas.lepo.co/wpfui/2022/xaml"
+                 Title="南邮校园网"
+                 Width="452" Height="744"
+                 MinWidth="440" MinHeight="620"
+                 WindowStartupLocation="CenterScreen"
+                 ResizeMode="CanResize"
+                 ExtendsContentIntoTitleBar="True"
+                 WindowBackdropType="Mica"
+                 WindowCornerPreference="Round"
+                 FontFamily="Microsoft YaHei UI, Segoe UI"
+                 Icon="Resources/app.ico">
+    <ui:FluentWindow.Resources>
+        <SolidColorBrush x:Key="Accent" Color="#2F6BFF" />
+        <SolidColorBrush x:Key="TextPrimary" Color="#0F172A" />
+        <SolidColorBrush x:Key="TextSecondary" Color="#5A6478" />
+        <SolidColorBrush x:Key="TextMuted" Color="#8B95A7" />
+        <SolidColorBrush x:Key="CardBg" Color="#FFFFFF" />
+        <SolidColorBrush x:Key="CardBorder" Color="#E8EDF6" />
+        <SolidColorBrush x:Key="SoftFill" Color="#F2F5FB" />
+        <SolidColorBrush x:Key="Success" Color="#0E9F6E" />
+
+        <Style x:Key="CardStyle" TargetType="Border">
+            <Setter Property="Background" Value="{StaticResource CardBg}" />
+            <Setter Property="BorderBrush" Value="{StaticResource CardBorder}" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="CornerRadius" Value="18" />
+            <Setter Property="Padding" Value="18,16" />
+            <Setter Property="Effect">
+                <Setter.Value>
+                    <DropShadowEffect Color="#0F172A" BlurRadius="26" ShadowDepth="2"
+                                      Direction="270" Opacity="0.06" />
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <Style x:Key="SectionTitle" TargetType="TextBlock">
+            <Setter Property="FontSize" Value="14" />
+            <Setter Property="FontWeight" Value="SemiBold" />
+            <Setter Property="Foreground" Value="{StaticResource TextPrimary}" />
+        </Style>
+
+        <Style x:Key="FieldLabel" TargetType="TextBlock">
+            <Setter Property="FontSize" Value="11.5" />
+            <Setter Property="Foreground" Value="{StaticResource TextMuted}" />
+            <Setter Property="Margin" Value="0,0,0,7" />
+        </Style>
+
+        <Style x:Key="LinkStyle" TargetType="ui:HyperlinkButton"
+               BasedOn="{StaticResource {x:Type ui:HyperlinkButton}}">
+            <Setter Property="FontSize" Value="11.5" />
+            <Setter Property="Padding" Value="0" />
+            <Setter Property="Foreground" Value="{StaticResource TextSecondary}" />
+        </Style>
+
+        <Style x:Key="SegmentRadio" TargetType="RadioButton">
+            <Setter Property="Foreground" Value="{StaticResource TextSecondary}" />
+            <Setter Property="FontSize" Value="12" />
+            <Setter Property="Cursor" Value="Hand" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="RadioButton">
+                        <Border x:Name="Segment" Background="Transparent" CornerRadius="8"
+                                Padding="0,7" SnapsToDevicePixels="True">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" />
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsChecked" Value="True">
+                                <Setter TargetName="Segment" Property="Background" Value="#FFFFFF" />
+                                <Setter Property="Foreground" Value="{StaticResource Accent}" />
+                                <Setter Property="FontWeight" Value="SemiBold" />
+                            </Trigger>
+                            <MultiTrigger>
+                                <MultiTrigger.Conditions>
+                                    <Condition Property="IsMouseOver" Value="True" />
+                                    <Condition Property="IsChecked" Value="False" />
+                                </MultiTrigger.Conditions>
+                                <Setter TargetName="Segment" Property="Background" Value="#E4EBF8" />
+                            </MultiTrigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <Style x:Key="IconGhostButton" TargetType="Button">
+            <Setter Property="Width" Value="34" />
+            <Setter Property="Height" Value="34" />
+            <Setter Property="Cursor" Value="Hand" />
+            <Setter Property="Foreground" Value="#FFFFFF" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="Bd" Background="#2BFFFFFF" CornerRadius="11">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" />
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Bd" Property="Background" Value="#45FFFFFF" />
+                            </Trigger>
+                            <Trigger Property="IsPressed" Value="True">
+                                <Setter TargetName="Bd" Property="Background" Value="#1FFFFFFF" />
+                            </Trigger>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter Property="Opacity" Value="0.5" />
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <Style x:Key="OptionBadge" TargetType="Border">
+            <Setter Property="Width" Value="36" />
+            <Setter Property="Height" Value="36" />
+            <Setter Property="CornerRadius" Value="11" />
+            <Setter Property="Background" Value="#EEF3FF" />
+        </Style>
+
+        <!-- 自绘主按钮模板：背景/前景完全由代码控制，避免 WPF-UI 的 Appearance 配色干扰 -->
+        <Style x:Key="ActionButton" TargetType="ui:Button">
+            <Setter Property="Height" Value="50" />
+            <Setter Property="FontSize" Value="14.5" />
+            <Setter Property="FontWeight" Value="SemiBold" />
+            <Setter Property="CornerRadius" Value="13" />
+            <Setter Property="HorizontalAlignment" Value="Stretch" />
+            <Setter Property="Cursor" Value="Hand" />
+            <Setter Property="Foreground" Value="#FFFFFF" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ui:Button">
+                        <Grid>
+                            <Border x:Name="Bd"
+                                    Background="{TemplateBinding Background}"
+                                    CornerRadius="{TemplateBinding CornerRadius}"
+                                    SnapsToDevicePixels="True">
+                                <ContentPresenter Margin="{TemplateBinding Padding}"
+                                                  HorizontalAlignment="Center"
+                                                  VerticalAlignment="Center" />
+                            </Border>
+                            <Border x:Name="Hover" Background="#00FFFFFF" CornerRadius="{TemplateBinding CornerRadius}" />
+                        </Grid>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Hover" Property="Background" Value="#1AFFFFFF" />
+                            </Trigger>
+                            <Trigger Property="IsPressed" Value="True">
+                                <Setter TargetName="Hover" Property="Background" Value="#2E000000" />
+                            </Trigger>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter Property="Opacity" Value="0.55" />
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+    </ui:FluentWindow.Resources>
+
+    <Grid>
+        <Grid.Background>
+            <LinearGradientBrush StartPoint="0,0" EndPoint="0.7,1">
+                <GradientStop Color="#EDF2FC" Offset="0" />
+                <GradientStop Color="#F6F8FD" Offset="0.5" />
+                <GradientStop Color="#FFFFFF" Offset="1" />
+            </LinearGradientBrush>
+        </Grid.Background>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+
+        <ui:TitleBar Grid.Row="0"
+                     Title=""
+                     ShowMaximize="False"
+                     Height="46"
+                     Padding="14,0,0,0">
+            <ui:TitleBar.Header>
+                <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                    <Image Source="Resources/app-icon-titlebar.png"
+                           Width="16" Height="16"
+                           VerticalAlignment="Center"
+                           Margin="0,0,7,0" />
+                    <TextBlock Text="南邮校园网"
+                               FontSize="12"
+                               VerticalAlignment="Center" />
+                </StackPanel>
+            </ui:TitleBar.Header>
+        </ui:TitleBar>
+
+        <ScrollViewer Grid.Row="1"
+                      VerticalScrollBarVisibility="Auto"
+                      HorizontalScrollBarVisibility="Disabled">
+            <StackPanel Margin="22,2,22,0">
+
+                <!-- 状态卡 -->
+                <Border x:Name="StatusCard" CornerRadius="20" Padding="18,15">
+                    <Border.Background>
+                        <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
+                            <GradientStop Color="#2F6BFF" Offset="0" />
+                            <GradientStop Color="#6E5BFF" Offset="1" />
+                        </LinearGradientBrush>
+                    </Border.Background>
+                    <Border.Effect>
+                        <DropShadowEffect Color="#2F4CD8" BlurRadius="26" ShadowDepth="6"
+                                          Direction="270" Opacity="0.28" />
+                    </Border.Effect>
+                    <Grid>
+                        <Border CornerRadius="20" IsHitTestVisible="False">
+                            <Border.Background>
+                                <LinearGradientBrush StartPoint="0.55,0" EndPoint="1,1">
+                                    <GradientStop Color="#00FFFFFF" Offset="0" />
+                                    <GradientStop Color="#1FFFFFFF" Offset="0.55" />
+                                    <GradientStop Color="#00FFFFFF" Offset="1" />
+                                </LinearGradientBrush>
+                            </Border.Background>
+                        </Border>
+
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+
+                            <Border x:Name="StatusBadge" Width="44" Height="44"
+                                    CornerRadius="15" Background="#2EFFFFFF"
+                                    VerticalAlignment="Center">
+                                <ui:SymbolIcon x:Name="StatusIcon" Symbol="Wifi124"
+                                               FontSize="21" Foreground="#FFFFFF" />
+                            </Border>
+
+                            <StackPanel Grid.Column="1" Margin="14,0,10,0" VerticalAlignment="Center">
+                                <TextBlock x:Name="StatusText" Text="正在检测网络状态…"
+                                           FontSize="17" FontWeight="SemiBold"
+                                           Foreground="#FFFFFF" TextTrimming="CharacterEllipsis" />
+                                <TextBlock x:Name="StatusSub" Text="请稍候"
+                                           FontSize="11.5" Foreground="#D8FFFFFF"
+                                           Margin="0,4,0,0" TextWrapping="Wrap" />
+                            </StackPanel>
+
+                            <Button x:Name="RefreshButton" Grid.Column="2"
+                                    Style="{StaticResource IconGhostButton}"
+                                    VerticalAlignment="Center"
+                                    Click="OnRefreshClick"
+                                    ToolTip="重新检测网络状态">
+                                <ui:SymbolIcon Symbol="ArrowClockwise16" FontSize="15"
+                                               Foreground="#FFFFFF" />
+                            </Button>
+                        </Grid>
+                    </Grid>
+                </Border>
+
+                <!-- 登录信息 -->
+                <Border Style="{StaticResource CardStyle}" Margin="0,12,0,0">
+                    <StackPanel>
+                        <Grid Margin="0,0,0,12">
+                            <TextBlock Text="登录信息" Style="{StaticResource SectionTitle}"
+                                       VerticalAlignment="Center" />
+                            <StackPanel Orientation="Horizontal" HorizontalAlignment="Right"
+                                        VerticalAlignment="Center">
+                                <ui:SymbolIcon Symbol="ShieldCheckmark16" FontSize="13"
+                                               Foreground="{StaticResource TextMuted}" />
+                                <TextBlock Text="密码仅保存在本机" FontSize="11"
+                                           Foreground="{StaticResource TextMuted}"
+                                           Margin="5,0,0,0" VerticalAlignment="Center" />
+                            </StackPanel>
+                        </Grid>
+
+                        <TextBlock Text="学号 / 账号" Style="{StaticResource FieldLabel}" />
+                        <ui:TextBox x:Name="AccountBox" Height="40" FontSize="13.5"
+                                    PlaceholderText="请输入学号"
+                                    ClearButtonEnabled="True"
+                                    TextChanged="OnAccountChanged">
+                            <ui:TextBox.Icon>
+                                <ui:SymbolIcon Symbol="Person24" FontSize="15" />
+                            </ui:TextBox.Icon>
+                        </ui:TextBox>
+
+                        <TextBlock Text="密码" Style="{StaticResource FieldLabel}" Margin="0,11,0,7" />
+                        <ui:PasswordBox x:Name="PasswordBox" Height="40" FontSize="13.5"
+                                        PlaceholderText="请输入密码"
+                                        RevealButtonEnabled="True"
+                                        PasswordChanged="OnPasswordChanged">
+                            <ui:PasswordBox.Icon>
+                                <ui:SymbolIcon Symbol="LockClosed24" FontSize="15" />
+                            </ui:PasswordBox.Icon>
+                        </ui:PasswordBox>
+
+                        <TextBlock Text="运营商" Style="{StaticResource FieldLabel}" Margin="0,11,0,7" />
+                        <Border Background="{StaticResource SoftFill}" CornerRadius="11" Padding="3">
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="*" />
+                                </Grid.ColumnDefinitions>
+                                <RadioButton x:Name="CarrierCampus" Grid.Column="0" GroupName="Carrier"
+                                             Content="校园网" Style="{StaticResource SegmentRadio}"
+                                             IsChecked="True" Checked="OnCarrierChanged" />
+                                <RadioButton x:Name="CarrierCmcc" Grid.Column="1" GroupName="Carrier"
+                                             Content="中国移动" Style="{StaticResource SegmentRadio}"
+                                             Checked="OnCarrierChanged" />
+                                <RadioButton x:Name="CarrierNjxy" Grid.Column="2" GroupName="Carrier"
+                                             Content="中国电信" Style="{StaticResource SegmentRadio}"
+                                             Checked="OnCarrierChanged" />
+                                <RadioButton x:Name="CarrierLt" Grid.Column="3" GroupName="Carrier"
+                                             Content="中国联通" Style="{StaticResource SegmentRadio}"
+                                             Checked="OnCarrierChanged" />
+                            </Grid>
+                        </Border>
+
+                        <TextBlock x:Name="AccountPreview" FontSize="11"
+                                   Foreground="{StaticResource TextMuted}"
+                                   Margin="2,6,0,0" TextTrimming="CharacterEllipsis" />
+                    </StackPanel>
+                </Border>
+
+                <!-- 启动选项 -->
+                <Border Style="{StaticResource CardStyle}" Margin="0,12,0,0" Padding="18,4">
+                    <StackPanel>
+                        <Grid Height="52">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <Border Style="{StaticResource OptionBadge}" VerticalAlignment="Center">
+                                <ui:SymbolIcon Symbol="ArrowSyncCircle20" FontSize="18"
+                                               Foreground="{StaticResource Accent}" />
+                            </Border>
+                            <StackPanel Grid.Column="1" Margin="13,0,8,0" VerticalAlignment="Center">
+                                <TextBlock Text="启动时自动登录" FontSize="13"
+                                           Foreground="{StaticResource TextPrimary}" />
+                                <TextBlock Text="打开程序后自动完成认证" FontSize="11"
+                                           Foreground="{StaticResource TextMuted}" Margin="0,3,0,0" />
+                            </StackPanel>
+                            <ui:ToggleSwitch x:Name="AutoLoginSwitch" Grid.Column="2"
+                                             FontSize="12" VerticalAlignment="Center"
+                                             Checked="OnAutoLoginChanged"
+                                             Unchecked="OnAutoLoginChanged" />
+                        </Grid>
+
+                        <Border Height="1" Background="#EFF3F9" Margin="49,0,0,0" />
+
+                        <Grid Height="52">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <Border Style="{StaticResource OptionBadge}" VerticalAlignment="Center"
+                                    Background="#E9F7F1">
+                                <ui:SymbolIcon Symbol="DesktopPulse20" FontSize="18"
+                                               Foreground="{StaticResource Success}" />
+                            </Border>
+                            <StackPanel Grid.Column="1" Margin="13,0,8,0" VerticalAlignment="Center">
+                                <TextBlock Text="开机自启" FontSize="13"
+                                           Foreground="{StaticResource TextPrimary}" />
+                                <TextBlock Text="登录 Windows 后自动运行" FontSize="11"
+                                           Foreground="{StaticResource TextMuted}" Margin="0,3,0,0" />
+                            </StackPanel>
+                            <ui:ToggleSwitch x:Name="StartupSwitch" Grid.Column="2"
+                                             FontSize="12" VerticalAlignment="Center"
+                                             Checked="OnStartupToggled"
+                                             Unchecked="OnStartupToggled" />
+                        </Grid>
+                    </StackPanel>
+                </Border>
+
+                <Grid Margin="0,14,0,0">
+                    <ui:Button x:Name="PrimaryButton" Content="正在检测…"
+                               Style="{StaticResource ActionButton}"
+                               Height="48"
+                               Background="#8FA6D8"
+                               IsEnabled="False"
+                               Click="OnPrimaryClick" />
+                    <ui:ProgressRing x:Name="BusyRing" IsIndeterminate="True"
+                                     Width="18" Height="18"
+                                     Foreground="#FFFFFF"
+                                     HorizontalAlignment="Right"
+                                     Margin="0,0,18,0"
+                                     VerticalAlignment="Center"
+                                     Visibility="Collapsed" />
+                </Grid>
+
+                <TextBlock x:Name="ActionHint" Text="登录后即可正常访问校内外网络"
+                           FontSize="11" Foreground="{StaticResource TextMuted}"
+                           HorizontalAlignment="Center" Margin="0,8,0,0" />
+
+                <Border x:Name="UpdateBanner" Visibility="Collapsed"
+                        Background="#EAF0FF" CornerRadius="12"
+                        Padding="13,10" Margin="0,12,0,0">
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <ui:SymbolIcon Symbol="CloudArrowDown20" FontSize="16"
+                                       Foreground="#2F6BFF" VerticalAlignment="Center" />
+                        <TextBlock x:Name="UpdateText" Grid.Column="1" FontSize="11.5"
+                                   Foreground="#2453C4" VerticalAlignment="Center"
+                                   TextWrapping="Wrap" Margin="8,0,8,0" />
+                        <ui:Button x:Name="UpdateButton" Grid.Column="2" Content="更新"
+                                   Height="28" Padding="12,0" FontSize="11.5"
+                                   CornerRadius="14" Appearance="Primary"
+                                   VerticalAlignment="Center"
+                                   Click="OnUpdateClick" />
+                    </Grid>
+                </Border>
+            </StackPanel>
+        </ScrollViewer>
+
+        <Border Grid.Row="2" Background="#B3FFFFFF"
+                BorderBrush="#E8EDF6" BorderThickness="0,1,0,0"
+                Padding="22,8,22,10">
+            <Grid>
+                <StackPanel Orientation="Horizontal" HorizontalAlignment="Left"
+                            VerticalAlignment="Center">
+                    <TextBlock x:Name="VersionText" FontSize="11"
+                               Foreground="{StaticResource TextMuted}"
+                               VerticalAlignment="Center" />
+                    <Border Width="1" Height="10" Background="#DCE3EF" Margin="10,0" />
+                    <ui:HyperlinkButton Content="检查更新"
+                                        Style="{StaticResource LinkStyle}"
+                                        Click="OnCheckUpdateClick" />
+                </StackPanel>
+                <ui:HyperlinkButton Content="项目地址" HorizontalAlignment="Right"
+                                    VerticalAlignment="Center"
+                                    Style="{StaticResource LinkStyle}"
+                                    Click="OnProjectClick" />
+            </Grid>
+        </Border>
+
+        <Border x:Name="ToastBorder" Grid.Row="1" Grid.RowSpan="2"
+                Visibility="Collapsed" Opacity="0"
+                HorizontalAlignment="Center" VerticalAlignment="Bottom"
+                Margin="22,0,22,64" Padding="15,9"
+                CornerRadius="11" Background="#EAF7F1"
+                IsHitTestVisible="False">
+            <Border.Effect>
+                <DropShadowEffect Color="#0F172A" BlurRadius="18" ShadowDepth="3"
+                                  Direction="270" Opacity="0.16" />
+            </Border.Effect>
+            <TextBlock x:Name="ToastText" FontSize="11.5" Foreground="#0E7A55"
+                       MaxWidth="376" TextWrapping="Wrap" TextAlignment="Center" />
+        </Border>
+    </Grid>
+</ui:FluentWindow>

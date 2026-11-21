@@ -1,6 +1,26 @@
-__pycache__/
-*.pyc
-build/
+# ===== 构建产物 =====
+bin/
+obj/
+publish/
 dist/
+installer/Output/
+
+# ===== 旧版 Python =====
+legacy/__pycache__/
+legacy/build/
+legacy/dist/
 *.spec
+!legacy/NJUPT_Net.spec
+
+# ===== 本地配置与日志 =====
 config.bin
+*.log
+update.log
+
+# ===== 编辑器 / 系统 =====
+.vs/
+.vscode/
+*.user
+*.suo
+Thumbs.db
+desktop.ini
